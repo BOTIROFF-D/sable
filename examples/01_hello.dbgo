@@ -1,0 +1,11 @@
+// Первая программа на dbgo
+let name = "мир"
+print("Привет, ${name}!")
+
+// Всё, что нужно для начала: переменные, функции, вывод
+fn greet(who, greeting = "Привет") {
+  return "${greeting}, ${who}!"
+}
+
+print(greet("dbgo"))
+print(greet("Ali", "Salom"))

@@ -1,0 +1,2 @@
+fn greet(name, greeting) { return "${greeting}, ${name}" }
+print(greet("Ali"))

@@ -1,0 +1,36 @@
+// Замыкания: функция помнит своё окружение
+fn make_account(balance) {
+  fn deposit(amount) {
+    if amount <= 0 { error("вклад должен быть положительным, получено ${amount}") }
+    balance += amount
+    return balance
+  }
+  fn withdraw(amount) {
+    if amount > balance { error("недостаточно средств: нужно ${amount}, есть ${balance}") }
+    balance -= amount
+    return balance
+  }
+  fn state() { return balance }
+  return { deposit: deposit, withdraw: withdraw, state: state }
+}
+
+let acc = make_account(100)
+print(acc.deposit(50))
+print(acc.withdraw(30))
+print("итог:", acc.state())
+
+// Мемоизация: словарь живёт в замыкании
+fn memoize(f) {
+  let cache = {}
+  return fn(n) {
+    if cache.has(n) { return cache.get(n) }
+    let result = f(n)
+    cache.set(n, result)
+    return result
+  }
+}
+
+let calls = 0
+fn slow_square(n) { calls += 1; return n * n }
+let fast = memoize(slow_square)
+print(fast(9), fast(9), fast(9), "вызовов настоящей функции:", calls)

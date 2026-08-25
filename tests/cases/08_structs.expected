@@ -1,0 +1,8 @@
+Point{x: 3, y: 4} 5 (4, 5)
+Point{x: 0, y: 0} Point{x: 5, y: 0}
+30 30.265491900843113
+Point struct
+true false
+1 6 6
+["а", "б", "в"]
+{"x":30,"y":4}

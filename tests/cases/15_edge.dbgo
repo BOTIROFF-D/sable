@@ -1,0 +1,44 @@
+// Краевые случаи, которые легко сломать будущей правкой
+let f = () -> 42
+print(f(), ((x) -> x + 1)(1))
+print([].len(), [].sort(), "".len(), {}.len(), (0..0).list())
+print([].first(), [].last())
+
+// цепочки постфиксов
+struct Box { items }
+let b = Box([{ name: "внутри" }])
+print(b.items[0].name, b.items.len())
+fn make() { return { get: () -> [10, 20] } }
+print(make().get()[1])
+
+// присваивание — выражение, справа налево
+let a = 0
+let c = 0
+a = c = 5
+print(a, c)
+
+// += по элементу и по полю
+let xs = [1, 2]
+xs[0] += 10
+let m = { n: 1 }
+m.n += 10
+b.items = []
+print(xs, m, b.items)
+
+// пустой return и return без значения в ветке
+fn maybe(n) { if n > 0 { return }; return "минус" }
+print(maybe(1), maybe(-1))
+
+// if/else в одну строку, вложенные тернарники в аргументе
+if true { print("одной строкой") } else { print("нет") }
+print([1, 2, 3].map(n -> n > 2 ? "б" : n > 1 ? "с" : "м"))
+
+// структура только с методами
+struct Utils { fn double(n) { return n * 2 } }
+print(Utils().double(21))
+
+// вызов возвращённой функции сразу
+print((fn(n) { return n * n })(7))
+
+// глубокая вложенность выражений
+print(((((1 + 2))) * ((3))))

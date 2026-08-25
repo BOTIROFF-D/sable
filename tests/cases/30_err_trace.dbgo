@@ -1,0 +1,4 @@
+fn level3(x) { return x.нет_такого_поля }
+fn level2(x) { return level3(x) }
+fn level1(x) { return level2(x) }
+print(level1(42))

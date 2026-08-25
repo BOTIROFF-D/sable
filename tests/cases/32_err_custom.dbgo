@@ -1,0 +1,6 @@
+fn withdraw(balance, amount) {
+  if amount > balance { error("недостаточно средств: нужно ${amount}, есть ${balance}") }
+  return balance - amount
+}
+print(withdraw(100, 30))
+print(withdraw(100, 500))

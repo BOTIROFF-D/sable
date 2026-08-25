@@ -1,0 +1,14 @@
+let name = "Мир"
+let n = 3
+print("Привет, ${name}! ${n} + ${n} = ${n + n}")
+print("вложенность: ${ "внутри ${name}" }")
+print("метод внутри вставки: ${name.upper()}")
+print("Salom".len(), "Salom".upper(), "SALOM".lower(), "  край  ".trim())
+print("а-б-в".split("-"), "abc".chars(), "abc".reverse())
+print("привет".contains("ив"), "привет".starts_with("при"), "привет".ends_with("ет"))
+print("привет".index_of("в"), "привет".index_of("ю"))
+print("а,б,в".replace(",", " | "))
+print("абвгд".slice(1, 3), "абвгд".slice(2), "абвгд".slice(-2))
+print("ab".repeat(3), "7".pad_start(3, "0"), "7".pad_end(3, "."))
+print("абв"[0], "абв"[-1])
+print(["а", "б"].join("+"))

@@ -1,0 +1,41 @@
+// Практическая задача: разобрать JSON и собрать отчёт
+const RAW = `[
+  {"name": "Ali",    "group": "A1", "paid": 450000, "lessons": 12},
+  {"name": "Vali",   "group": "A1", "paid": 0,      "lessons": 8},
+  {"name": "Gulnoz", "group": "B2", "paid": 600000, "lessons": 16}
+]`
+
+let students = from_json(RAW)
+
+fn money(n) {
+  let s = str(int(n))
+  let out = ""
+  let count = 0
+  for i in 0..s.len() {
+    let ch = s[s.len() - 1 - i]
+    out = ch + (count > 0 && count % 3 == 0 ? " " : "") + out
+    count += 1
+  }
+  return out + " сум"
+}
+
+let by_group = {}
+for s in students {
+  let list = by_group.get(s.group, [])
+  list.push(s)
+  by_group.set(s.group, list)
+}
+
+print("Отчёт по ${students.len()} студентам\n")
+for group in by_group.keys() {
+  let members = by_group.get(group)
+  let paid = members.map(s -> s.paid).reduce((a, b) -> a + b, 0)
+  print("Группа ${group}: ${members.len()} чел., оплачено ${money(paid)}")
+  for s in members {
+    let mark = s.paid == 0 ? "ДОЛГ" : "ок"
+    print("  ${s.name.pad_end(8, ' ')} ${s.lessons} занятий  ${mark}")
+  }
+}
+
+let debtors = students.filter(s -> s.paid == 0)
+print("\nДолжников: ${debtors.len()} — ${debtors.map(s -> s.name).join(', ')}")

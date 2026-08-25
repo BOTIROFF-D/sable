@@ -1,0 +1,7 @@
+// Классика: числа 1..20, кратные 3 — «Fizz», кратные 5 — «Buzz»
+for n in 1..21 {
+  let out = ""
+  if n % 3 == 0 { out += "Fizz" }
+  if n % 5 == 0 { out += "Buzz" }
+  print(out == "" ? str(n) : out)
+}

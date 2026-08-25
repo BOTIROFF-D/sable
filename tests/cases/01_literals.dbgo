@@ -1,0 +1,8 @@
+print(42, -7, 3.5, 1_000_000, 0xFF, 1e3, 2.5e-2)
+print(true, false, nil)
+print("простая строка")
+print("экраны: \"кавычки\", \\обратный слэш, \tтаб, конец\nвторая строка")
+print("юникод: \u{41}\u{4F}, эмодзи ok")
+print('одинарные кавычки тоже строка')
+print(repr("текст"), repr([1, "два", nil]), repr({a: 1}))
+print(type(1), type("s"), type(true), type(nil), type([1]), type({a: 1}), type(0..3), type(print))

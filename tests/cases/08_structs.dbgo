@@ -1,0 +1,32 @@
+struct Point {
+  x = 0
+  y = 0
+  fn len() { return sqrt(self.x ^ 2 + self.y ^ 2) }
+  fn plus(other) { return Point(self.x + other.x, self.y + other.y) }
+  fn label() { return "(${self.x}, ${self.y})" }
+}
+let a = Point(3, 4)
+let b = Point(1, 1)
+print(a, a.len(), a.plus(b).label())
+print(Point(), Point(5))
+a.x = 30
+print(a.x, a.len())
+print(type(a), type(Point))
+print(a == Point(30, 4), a == b)
+
+struct Counter {
+  value = 0
+  fn bump(by = 1) { self.value += by; return self.value }
+}
+let c = Counter()
+print(c.bump(), c.bump(5), c.value)
+
+struct Node { label, next = nil }
+let chain = Node("а", Node("б", Node("в")))
+fn walk(n) {
+  let names = []
+  while n != nil { names.push(n.label); n = n.next }
+  return names
+}
+print(walk(chain))
+print(to_json(a))

@@ -1,0 +1,28 @@
+fn add(a, b = 10, c = b * 2) { return a + b + c }
+print(add(1), add(1, 2), add(1, 2, 3))
+
+fn no_return() { let x = 1 }
+print(no_return())
+
+let square = fn(x) { return x * x }
+let cube = fn(x) -> x ^ 3
+let inc = x -> x + 1
+let mul = (a, b) -> a * b
+print(square(4), cube(3), inc(1), mul(3, 4))
+
+fn make_adder(n) { return fn(x) -> x + n }
+let add5 = make_adder(5)
+print(add5(10), make_adder(100)(1))
+
+fn apply(f, v) { return f(v) }
+print(apply(square, 6), apply(x -> x - 1, 6))
+
+fn fact(n) { if n <= 1 { return 1 }; return n * fact(n - 1) }
+print(fact(10))
+
+fn even(n) { if n == 0 { return true }; return odd(n - 1) }
+fn odd(n) { if n == 0 { return false }; return even(n - 1) }
+print(even(10), odd(7))
+
+// колбэк может взять только первый аргумент, а может и индекс
+print([10, 20].map(x -> x), [10, 20].map((x, i) -> "${i}:${x}"))

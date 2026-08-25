@@ -1,0 +1,3 @@
+struct User { name }
+let u = User("Ali")
+u.nmae = "Vali"

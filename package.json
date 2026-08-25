@@ -1,0 +1,23 @@
+{
+  "name": "dbgo",
+  "version": "0.1.0",
+  "description": "dbgo — учебно-боевой язык программирования: лексер, парсер, tree-walking интерпретатор",
+  "type": "module",
+  "bin": {
+    "dbgo": "./bin/dbgo.mjs"
+  },
+  "scripts": {
+    "dbgo": "node src/cli.ts",
+    "repl": "node src/cli.ts",
+    "test": "node tests/run.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT"
+}

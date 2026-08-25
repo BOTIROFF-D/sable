@@ -1,0 +1,19 @@
+// Частота слов в тексте: строки, словари, сортировка
+const TEXT = "мы строим язык мы пишем язык мы проверяем язык каждый день"
+
+fn word_frequency(text) {
+  let counts = {}
+  for word in text.lower().split(" ") {
+    if word == "" { continue }
+    counts.set(word, counts.get(word, 0) + 1)
+  }
+  return counts
+}
+
+let counts = word_frequency(TEXT)
+let ranked = counts.entries().sort((a, b) -> b[1] - a[1])
+
+print("Всего разных слов: ${counts.len()}")
+for pair in ranked {
+  print("  ${pair[0].pad_end(12, '.')} ${pair[1]}")
+}

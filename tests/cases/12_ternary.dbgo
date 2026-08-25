@@ -1,0 +1,11 @@
+print(true ? "да" : "нет", false ? "да" : "нет")
+let n = 7
+print(n % 2 == 0 ? "чётное" : "нечётное")
+print(n > 10 ? "много" : n > 5 ? "средне" : "мало")
+let label = nil
+print(label ?? (n > 0 ? "положительное" : "иное"))
+// вычисляется только выбранная ветка
+let calls = 0
+fn touch(v) { calls += 1; return v }
+print(true ? touch("а") : touch("б"), calls)
+print([1, 2, 3].map(x -> x % 2 == 0 ? "ч" : "н"))

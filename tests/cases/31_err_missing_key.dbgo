@@ -1,0 +1,2 @@
+let cfg = { host: "localhost" }
+print(cfg["port"])

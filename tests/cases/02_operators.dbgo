@@ -1,0 +1,15 @@
+print(2 + 3 * 4, (2 + 3) * 4, 10 / 4, 10 % 3, 2 ^ 10)
+print(2 ^ 3 ^ 2)
+print(-2 ^ 2, (-2) ^ 2)
+print(1 < 2, 2 <= 2, 3 > 4, "abc" < "abd", "я" > "а")
+print(1 == 1.0, "a" == "a", [1, [2]] == [1, [2]], {a: 1} == {a: 1}, nil == nil)
+print(1 != 2, [1] != [2])
+print(true && false, true || false, !true, not false)
+print(true and false, false or true)
+print(nil ?? "запасное", 0 ?? "не сработает", false ?? "и здесь нет")
+print("аб" + "вг", [1, 2] + [3], "ха" * 3, [0] * 3)
+print(1 < 2 && 2 < 3 || false)
+let side_effect = 0
+fn bump() { side_effect += 1; return true }
+print(false && bump(), side_effect)
+print(true || bump(), side_effect)

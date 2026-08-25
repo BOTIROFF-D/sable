@@ -1,0 +1,13 @@
+Ali 20 2
+{"name": "Ali", "age": 21, "city": "Bukhara"}
+true false
+nil по умолчанию
+["name", "age", "city"] ["Ali", 21, "Bukhara"]
+[["name", "Ali"], ["age", 21], ["city", "Bukhara"]]
+Bukhara false
+{"name": "Ali", "age": 21, "role": "student"}
+["name", "age"] ["Ali", 21] 2
+один да значение
+{"динамический": 1}
+42
+{"a": {"b": {"c": 7}}}

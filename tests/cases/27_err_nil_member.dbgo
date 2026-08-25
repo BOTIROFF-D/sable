@@ -1,0 +1,3 @@
+fn find_user() { return nil }
+let u = find_user()
+print(u.name)

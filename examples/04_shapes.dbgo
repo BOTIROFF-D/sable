@@ -1,0 +1,25 @@
+// Структуры с методами: считаем площади фигур
+struct Rect {
+  w
+  h
+  fn area() { return self.w * self.h }
+  fn name() { return "прямоугольник ${self.w}×${self.h}" }
+}
+
+struct Circle {
+  r
+  fn area() { return 3.141592653589793 * self.r ^ 2 }
+  fn name() { return "круг радиусом ${self.r}" }
+}
+
+let shapes = [Rect(3, 4), Circle(2), Rect(10, 1)]
+
+for s in shapes {
+  print("${s.name().pad_end(28, ' ')} площадь ${round(s.area(), 2)}")
+}
+
+let total = shapes.map(s -> s.area()).reduce((a, b) -> a + b, 0)
+print("Суммарная площадь: ${round(total, 2)}")
+
+let biggest = shapes.sort((a, b) -> b.area() - a.area()).first()
+print("Самая большая: ${biggest.name()}")

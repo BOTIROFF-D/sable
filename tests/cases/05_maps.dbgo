@@ -1,0 +1,20 @@
+let u = { name: "Ali", age: 20 }
+print(u.name, u["age"], u.len())
+u.age = 21
+u["city"] = "Bukhara"
+print(u)
+print(u.has("name"), u.has("nope"))
+print(u.get("nope"), u.get("nope", "по умолчанию"))
+print(u.keys(), u.values())
+print(u.entries())
+print(u.remove("city"), u.has("city"))
+print(u.merge({ role: "student" }))
+print(keys(u), values(u), len(u))
+let mixed = { 1: "один", true: "да", "ключ": "значение" }
+print(mixed[1], mixed[true], mixed["ключ"])
+let computed = "динамический"
+print({ [computed]: 1 })
+let nested = { a: { b: { c: 42 } } }
+print(nested.a.b.c)
+nested.a.b.c = 7
+print(nested)

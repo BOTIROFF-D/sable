@@ -1,0 +1,2 @@
+let balance = 5
+assert(balance > 10, "баланс должен быть больше 10, а он ${balance}")

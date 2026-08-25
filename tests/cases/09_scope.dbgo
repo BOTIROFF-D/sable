@@ -1,0 +1,32 @@
+let x = "внешний"
+{
+  let x = "внутренний"
+  print(x)
+}
+print(x)
+
+const PI = 3.14
+print(PI)
+
+fn shadow() { let x = "в функции"; return x }
+print(shadow(), x)
+
+// каждая итерация — своя переменная цикла
+let fns = []
+for i in 0..3 { fns.push(fn() -> i) }
+print(fns.map(f -> f()))
+
+let counters = []
+for i in 0..2 {
+  let local = i * 100
+  counters.push(fn() -> local)
+}
+print(counters.map(f -> f()))
+
+fn outer() {
+  let n = 0
+  fn inner() { n += 1; return n }
+  inner(); inner()
+  return n
+}
+print(outer())
