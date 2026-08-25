@@ -62,29 +62,34 @@ const STAGE_TITLE: Record<string, string> = {
 };
 
 /**
- * Отчёт об ошибке для терминала: заголовок, путь, строка исходника и каретка.
- * Ширина колонки номеров считается от самого большого номера, чтобы не съезжало.
+ * Заголовок, путь, строка исходника и каретка под виновником.
+ * Общий вид для ошибок и для замечаний статической проверки.
+ */
+export function formatAt(title: string, message: string, span: Span | null, source: string): string {
+  const out: string[] = [`${title}: ${message}`];
+  if (!span) return out.join('\n');
+
+  const { line, col, file } = span;
+  out.push(`  --> ${file}:${line}:${col}`);
+  const lines = (SOURCES.get(file) ?? source).split('\n');
+  const gutter = String(line).length;
+  const pad = ' '.repeat(gutter);
+  const src = lines[line - 1];
+  if (src !== undefined) {
+    out.push(`${pad} |`);
+    out.push(`${String(line).padStart(gutter)} | ${src.replace(/\t/g, '    ')}`);
+    // Табы в исходнике развёрнуты в 4 пробела — каретку двигаем на столько же.
+    const prefix = src.slice(0, Math.max(0, col - 1)).replace(/\t/g, '    ');
+    out.push(`${pad} | ${' '.repeat(prefix.length)}^`);
+  }
+  return out.join('\n');
+}
+
+/**
+ * Отчёт об ошибке для терминала: то же плюс стек вызовов.
  */
 export function formatError(err: DbgoError, source: string): string {
-  const title = STAGE_TITLE[err.stage] ?? 'Ошибка';
-  const out: string[] = [`${title}: ${err.message}`];
-
-  if (err.span) {
-    const { line, col, file } = err.span;
-    out.push(`  --> ${file}:${line}:${col}`);
-    const lines = (SOURCES.get(file) ?? source).split('\n');
-    const gutter = String(line).length;
-    const pad = ' '.repeat(gutter);
-    const src = lines[line - 1];
-    if (src !== undefined) {
-      out.push(`${pad} |`);
-      out.push(`${String(line).padStart(gutter)} | ${src.replace(/\t/g, '    ')}`);
-      // Табы в исходнике развёрнуты в 4 пробела — каретку двигаем на столько же.
-      const prefix = src.slice(0, Math.max(0, col - 1)).replace(/\t/g, '    ');
-      out.push(`${pad} | ${' '.repeat(prefix.length)}^`);
-    }
-  }
-
+  const out = [formatAt(STAGE_TITLE[err.stage] ?? 'Ошибка', err.message, err.span, source)];
   // Повторы одного кадра (рекурсия) схлопываются — иначе трейс превращается в стену.
   for (let i = 0; i < err.trace.length; ) {
     const frame = err.trace[i]!;

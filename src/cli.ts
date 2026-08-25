@@ -2,7 +2,8 @@
 import { readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { DbgoError, formatError, registerSource, shortPath } from './errors.ts';
+import { check } from './checker.ts';
+import { DbgoError, formatAt, formatError, registerSource, shortPath } from './errors.ts';
 import { Interpreter } from './interpreter.ts';
 import { tokenize } from './lexer.ts';
 import { parse } from './parser.ts';
@@ -16,6 +17,65 @@ export const EXT = '.dbgo';
 export function runSource(source: string, file: string, interp: Interpreter): Value {
   const program = parse(tokenize(source, file), file);
   return interp.runInteractive(program);
+}
+
+/** Прочитать файл и разобрать его, ничего не выполняя. */
+function loadProgram(path: string): { source: string; file: string; full: string } | number {
+  const full = resolve(path);
+  let source: string;
+  try {
+    source = readFileSync(full, 'utf8');
+  } catch {
+    process.stderr.write(`${LANG}: не удалось открыть файл «${path}»\n`);
+    return 66;
+  }
+  const file = shortPath(full, relative(process.cwd(), full));
+  registerSource(file, source);
+  return { source, file, full };
+}
+
+/**
+ * Статическая проверка без запуска.
+ *
+ * Намеренно отдельной командой, а не частью обычного запуска: проверка судит
+ * о программе по одному лишь тексту и может ошибиться там, где программа
+ * рабочая (например, имя, до которого дело доходит только внутри try/catch).
+ * Ломать из-за этого запуск рабочего кода нельзя.
+ */
+function checkFile(path: string): number {
+  const loaded = loadProgram(path);
+  if (typeof loaded === 'number') return loaded;
+  const { source, file, full } = loaded;
+
+  let program;
+  try {
+    program = parse(tokenize(source, file), file);
+  } catch (e) {
+    if (e instanceof DbgoError) {
+      process.stderr.write(formatError(e, source) + '\n');
+      return 65;
+    }
+    throw e;
+  }
+
+  // Интерпретатор создаётся только ради списка встроенных имён — программа не выполняется.
+  const interp = new Interpreter({ write: () => {} }, full);
+  const diags = check(program, interp.globals.ownEntries().keys());
+
+  const errors = diags.filter((d) => d.severity === 'error').length;
+  const warnings = diags.length - errors;
+
+  for (const d of diags) {
+    const title = d.severity === 'error' ? 'Ошибка' : 'Замечание';
+    process.stdout.write(formatAt(title, d.message, d.span, source) + '\n\n');
+  }
+
+  if (diags.length === 0) {
+    process.stdout.write(`${file}: замечаний нет\n`);
+    return 0;
+  }
+  process.stdout.write(`${file}: ошибок — ${errors}, замечаний — ${warnings}\n`);
+  return errors > 0 ? 65 : 0;
 }
 
 function runFile(path: string): number {
@@ -104,16 +164,26 @@ const HELP_REPL = `
   Незавершённая строка продолжается автоматически — например, после «{».
 `;
 
-const HELP = `${LANG} ${VERSION} — язык программирования
+const HELP_ROWS: Array<[string, string]> = [
+  [`dbgo <файл${EXT}>`, 'выполнить файл'],
+  ['dbgo', 'интерактивный режим (REPL)'],
+  ['dbgo -e "<код>"', 'выполнить строку кода'],
+  [`dbgo --check <файл${EXT}>`, 'проверить, не запуская'],
+  ['dbgo --version', 'версия'],
+  ['dbgo --help', 'эта справка'],
+];
 
-  dbgo <файл${EXT}>    выполнить файл
-  dbgo               интерактивный режим (REPL)
-  dbgo -e "<код>"    выполнить строку кода
-  dbgo --version     версия
-  dbgo --help        эта справка
-
-  Примеры: examples/*${EXT}   Справочник: docs/LANGUAGE.md
-`;
+// Ширина первой колонки считается по самой длинной строке — тогда справка
+// не съедет, если поменять расширение или добавить команду.
+const HELP = [
+  `${LANG} ${VERSION} — язык программирования`,
+  '',
+  ...HELP_ROWS.map(([cmd, about]) =>
+    `  ${cmd.padEnd(Math.max(...HELP_ROWS.map(([c]) => c.length)) + 3)}${about}`),
+  '',
+  `  Примеры: examples/*${EXT}   Справочник: docs/LANGUAGE.md`,
+  '',
+].join('\n');
 
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
@@ -121,6 +191,12 @@ async function main(): Promise<number> {
   if (args.length === 0) return repl();
   if (args[0] === '--help' || args[0] === '-h') { process.stdout.write(HELP); return 0; }
   if (args[0] === '--version' || args[0] === '-v') { process.stdout.write(`${LANG} ${VERSION}\n`); return 0; }
+
+  if (args[0] === '--check' || args[0] === '-c') {
+    const target = args[1];
+    if (target === undefined) { process.stderr.write('после --check нужен путь к файлу\n'); return 64; }
+    return checkFile(target);
+  }
 
   if (args[0] === '-e') {
     const source = args[1];
