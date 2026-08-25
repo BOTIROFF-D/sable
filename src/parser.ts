@@ -10,6 +10,14 @@ const NAMES: Partial<Record<TokenType, string>> = {
   LBRACE: '«{»', RBRACE: '«}»', COMMA: '«,»', COLON: '«:»',
   IDENT: 'имя', NUMBER: 'число', STRING: 'строка', ASSIGN: '«=»', IN: '«in»',
 };
+/**
+ * Предел вложенности выражений и блоков. Дальше рекурсивный спуск срывает стек JS,
+ * и вместо ошибки языка пользователь видит стек JavaScript. Замер: разбор ломается
+ * между 200 и 250 уровнями, поэтому порог стоит заметно ниже.
+ * Столько же держат обход дерева в проверке и в форматтере.
+ */
+const MAX_NESTING = 150;
+
 const describe = (t: Token): string =>
   NAMES[t.type] ?? (t.lexeme ? `«${t.lexeme}»` : t.type);
 
@@ -23,6 +31,8 @@ export class Parser {
   private errors: DbgoError[] = [];
   /** Глубина вложенности блоков: import разрешён только на верхнем уровне. */
   private blockDepth = 0;
+  /** Глубина вложенности разбора — страховка от срыва стека на «[[[[…]]]]». */
+  private depth = 0;
 
   constructor(tokens: Token[], file = '<input>') {
     this.tokens = tokens;
@@ -252,6 +262,13 @@ export class Parser {
 
   private block(): Stmt[] {
     this.expect('LBRACE', '«{» и тело блока');
+    if (++this.depth > MAX_NESTING) {
+      this.depth--;
+      throw parseError(
+        `блоки вложены глубже ${MAX_NESTING} уровней — такую вложенность разобрать нельзя`,
+        this.prev().span,
+      );
+    }
     const body: Stmt[] = [];
     this.blockDepth++;
     try {
@@ -262,6 +279,7 @@ export class Parser {
       }
     } finally {
       this.blockDepth--;
+      this.depth--;
     }
     this.expect('RBRACE', '«}» в конце блока');
     return body;
@@ -370,7 +388,18 @@ export class Parser {
   // ---- выражения ----------------------------------------------------------
 
   private expression(): Expr {
-    return this.assignment();
+    if (++this.depth > MAX_NESTING) {
+      this.depth--;
+      throw parseError(
+        `выражение вложено глубже ${MAX_NESTING} уровней — такую вложенность разобрать нельзя`,
+        this.peek().span,
+      );
+    }
+    try {
+      return this.assignment();
+    } finally {
+      this.depth--;
+    }
   }
 
   private assignment(): Expr {
@@ -399,11 +428,11 @@ export class Parser {
       if (target.kind !== 'Ident' && target.kind !== 'Get' && target.kind !== 'Index') {
         throw parseError('присваивать можно только переменной, полю или элементу', op.span);
       }
+      // Оператор хранится в узле, а не разворачивается в «a[i] = a[i] + v»:
+      // при развороте цель попадала в дерево дважды и вычислялась дважды,
+      // так что `xs[next()] += 5` звал next() два раза и писал не туда.
       const rhs = this.assignment();
-      const value: Expr = compound[op.type]
-        ? { kind: 'Binary', op: compound[op.type]!, left: target, right: rhs, span: op.span }
-        : rhs;
-      return { kind: 'Assign', target, value, span: op.span };
+      return { kind: 'Assign', op: compound[op.type] ?? null, target, value: rhs, span: op.span };
     }
 
     return target;

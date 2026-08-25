@@ -143,7 +143,13 @@ export function equals(a: Value, b: Value): boolean {
   if (a === b) return true;
   if (typeof a === 'number' && typeof b === 'number') return a === b;
   if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((x, i) => equals(x, b[i]!));
+    if (a.length !== b.length) return false;
+    // Обход по индексу, а не every: every пропускает пустые ячейки, и тогда
+    // равенство переставало быть симметричным — «a == b» истинно, «b == a» нет.
+    for (let i = 0; i < a.length; i++) {
+      if (!equals(a[i] ?? null, b[i] ?? null)) return false;
+    }
+    return true;
   }
   if (a instanceof Map && b instanceof Map) {
     if (a.size !== b.size) return false;

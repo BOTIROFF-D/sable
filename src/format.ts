@@ -30,7 +30,7 @@
  *   • скобки в выражениях расставляются по приоритетам заново — лишние исчезают,
  *     необходимые появляются (в том числе вокруг словаря в заголовке if/while/for);
  *   • у записей, которые парсер разбирает в одно дерево, каноническая — короткая:
- *     `x = x + 1` → `x += 1`, `fn(x) { return x * 2 }` → `x -> x * 2`,
+ *     `fn(x) { return x * 2 }` → `x -> x * 2`,
  *     `and`/`or` → `&&`/`||` (словесное `not` до форматтера не доживает — лексер
  *     отдаёт «!», и держать половину синонимов было бы страннее).
  *
@@ -172,6 +172,19 @@ function scanSource(src: string): Scan {
           while (i < src.length) {
             const d = src[i]!;
             if (d === '\n') line++;
+            // Внутри вставки может быть своя строка, а в ней — фигурные скобки.
+            // Считать их за скобки вставки значит оборвать литерал посреди.
+            if (d === '"' || d === "'" || d === '`') {
+              i++;
+              while (i < src.length) {
+                const e = src[i]!;
+                if (e === '\\') { if (src[i + 1] === '\n') line++; i += 2; continue; }
+                if (e === '\n') line++;
+                i++;
+                if (e === d) break;
+              }
+              continue;
+            }
             if (d === '{') braces++;
             if (d === '}') { braces--; if (braces === 0) { i++; break; } }
             i++;
@@ -857,20 +870,12 @@ class Formatter {
       }
 
       case 'Assign': {
+        // `x = x + 1` в `x += 1` не переписывается: это разные деревья и разное
+        // поведение. `a[i()] += 1` считает индекс один раз, `a[i()] = a[i()] + 1` — два.
+        // Форматтер выравнивает запись, а не меняет смысл.
         const target = this.expr(e.target, P_POSTFIX, col, ind, flat);
-        // `x = x + 1` печатается как `x += 1`: парсер разбирает обе записи
-        // в одно и то же дерево, короткая — каноническая.
-        const v = e.value;
-        if (v.kind === 'Binary' && '+-*/'.includes(v.op) && v.op.length === 1) {
-          this.silent++;
-          const same = this.exprRaw(v.left, 0, 0, true) === this.exprRaw(e.target, 0, 0, true);
-          this.silent--;
-          if (same) {
-            const mid = ` ${v.op}= `;
-            return target + mid + this.expr(v.right, P_LOWEST, endCol(target, col) + mid.length, ind, flat);
-          }
-        }
-        return target + ' = ' + this.expr(v, P_LOWEST, endCol(target, col) + 3, ind, flat);
+        const mid = e.op === null ? ' = ' : ` ${e.op}= `;
+        return target + mid + this.expr(e.value, P_LOWEST, endCol(target, col) + mid.length, ind, flat);
       }
 
       case 'Get':

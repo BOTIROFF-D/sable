@@ -19,7 +19,7 @@ export type Expr =
   | { kind: 'Call'; callee: Expr; args: Expr[]; span: Span }
   | { kind: 'Get'; object: Expr; name: string; span: Span }
   | { kind: 'Index'; object: Expr; index: Expr; span: Span }
-  | { kind: 'Assign'; target: Expr; value: Expr; span: Span }
+  | { kind: 'Assign'; op: string | null; target: Expr; value: Expr; span: Span }
   | { kind: 'Fn'; name: string | null; params: Param[]; body: Stmt[]; span: Span };
 
 export type Stmt =

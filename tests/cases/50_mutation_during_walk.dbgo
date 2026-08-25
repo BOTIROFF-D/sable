@@ -1,0 +1,26 @@
+// Колбэк вправе менять список прямо во время обхода. Обход идёт по копии,
+// иначе в результате оставались бы пустые ячейки, а наружу лезло бы значение,
+// которого в языке нет.
+let xs = [1, 2, 3]
+print(xs.map(x -> xs.pop()), xs)
+
+let ys = [1, 2, 3]
+print(ys.filter(fn(x) { ys.pop(); return true }), ys)
+
+let zs = [3, 1, 2]
+print(zs.map(x -> zs.remove_at(0)))
+
+let ws = [1, 2, 3]
+print(map(ws, x -> ws.pop()))
+
+let vs = [1, 2, 3]
+print(vs.sort_by(x -> vs.pop()))
+
+// у каждого элемента результата есть настоящий тип
+let rs = [1, 2, 3]
+let got = rs.map(x -> rs.pop())
+print(got.map(v -> type(v)), to_json(got))
+
+// равенство симметрично всегда
+print(got == [3, 2, 1], [3, 2, 1] == got)
+print([1, 2] == [1, 2], [1, 2] == [1, 3], [1, 3] == [1, 2])

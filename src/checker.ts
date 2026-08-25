@@ -25,7 +25,14 @@ export type Diagnostic = { severity: 'error' | 'warning'; message: string; span:
 type Arity = { name: string; min: number; max: number };
 
 /** Что известно про структуру: имя, поля по порядку и арность конструктора. */
-type StructInfo = { name: string; fields: string[]; min: number; max: number };
+type StructInfo = {
+  name: string;
+  fields: string[];
+  min: number;
+  max: number;
+  /** Методы структуры и сколько аргументов каждый принимает. */
+  methods: Map<string, Arity>;
+};
 
 /** Что известно про имя: где объявлено, можно ли менять, чем оно является. */
 type Binding = {
@@ -58,8 +65,10 @@ class Checker {
   private scope: Scope;
   /** Область объявлений верхнего уровня программы — НЕ область встроенных имён. */
   private topScope: Scope;
-  /** Тела функций, отложенные до конца текущего блока. */
+  /** Тела функций, отложенные до конца программы. */
   private deferred: Array<() => void> = [];
+  /** Области, для которых отчёт о забытых именах ждёт конца программы. */
+  private pendingUnused: Scope[] = [];
   private loopDepth = 0;
   private fnDepth = 0;
   /** Имена, которым где-то в программе присваивают: их тип считать известным нельзя. */
@@ -84,6 +93,13 @@ class Checker {
   run(program: Program): Diagnostic[] {
     collectReassigned(program, this.reassigned);
     this.block(program, this.scope);
+    // Тела функций могут порождать новые отложенные тела — черпаем до дна.
+    while (this.deferred.length > 0) {
+      const jobs = this.deferred;
+      this.deferred = [];
+      for (const job of jobs) job();
+    }
+    for (const scope of this.pendingUnused) this.reportUnused(scope);
     // Порядок отчёта — порядок чтения: сверху вниз, слева направо.
     this.diags.sort((a, b) => a.span.line - b.span.line || a.span.col - b.span.col);
     return this.diags;
@@ -139,9 +155,7 @@ class Checker {
    */
   private block(stmts: Stmt[], scope: Scope, prelude?: () => void): void {
     const prevScope = this.scope;
-    const prevDeferred = this.deferred;
     this.scope = scope;
-    this.deferred = [];
 
     if (prelude) prelude();
 
@@ -164,13 +178,10 @@ class Checker {
       }
     }
 
-    const jobs = this.deferred;
-    this.deferred = prevDeferred;
-    // Тела функций проверяются, когда весь блок разобран: имя ищется в момент вызова.
-    for (const job of jobs) job();
-
     this.scope = prevScope;
-    this.reportUnused(scope);
+    // Отчёт о забытых именах ждёт конца программы: имя может быть использовано
+    // в теле функции, которое проверяется позже.
+    this.pendingUnused.push(scope);
   }
 
   private reportUnused(scope: Scope): void {
@@ -218,6 +229,7 @@ class Checker {
           fields: stmt.fields.map((f) => f.name),
           min: stmt.fields.filter((f) => f.def === null).length,
           max: stmt.fields.length,
+          methods: new Map(stmt.methods.map((m) => [m.name, arityOf(`${stmt.name}.${m.name}`, m.params)])),
         };
         const b = this.define(stmt.name, stmt.span, 'struct', false, false);
         b.struct = info;
@@ -285,8 +297,15 @@ class Checker {
   // ---- функции ------------------------------------------------------------
 
   /**
-   * Отложить проверку тела до конца текущего блока. Внутри тела счётчик циклов
-   * обнуляется: «break» в функции, объявленной внутри цикла, до цикла не долетит.
+   * Отложить проверку тела до конца программы — не до конца блока, где функция
+   * объявлена. Имя ищется в момент вызова, а вызвать функцию могут когда угодно
+   * позже; проверка на границе блока объявляла бы ошибкой рабочий код:
+   *
+   *     { fn внутри() { return позже() } }
+   *     fn позже() { return 7 }
+   *
+   * Внутри тела счётчик циклов обнуляется: «break» в функции, объявленной внутри
+   * цикла, до цикла не долетит.
    */
   private deferFunction(params: Param[], body: Stmt[], span: Span, self: StructInfo | null): void {
     const scope = this.scope;
@@ -382,9 +401,20 @@ class Checker {
         this.expression(expr.index);
         return;
 
-      case 'Get':
+      case 'Get': {
         this.expression(expr.object);
+        // Тип известен только там, где он очевиден глазами; иначе молчим.
+        const info = this.structOf(expr.object);
+        if (info && !info.fields.includes(expr.name) && !info.methods.has(expr.name)) {
+          const near = nearestOf(expr.name, [...info.fields, ...info.methods.keys()]);
+          this.error(
+            `у ${info.name} нет поля или метода «${expr.name}»`
+            + (near ? ` — возможно, имелось в виду «${near}»` : ''),
+            expr.span,
+          );
+        }
         return;
+      }
 
       case 'Call':
         this.call(expr);
@@ -415,6 +445,15 @@ class Checker {
     this.expression(expr.callee);
     for (const a of expr.args) this.expression(a);
 
+    // Метод структуры, тип которой очевиден: арность известна так же точно,
+    // как у свободной функции.
+    if (expr.callee.kind === 'Get') {
+      const info = this.structOf(expr.callee.object);
+      const method = info?.methods.get(expr.callee.name);
+      if (method) this.checkArity(method, expr.args.length, expr.span);
+      return;
+    }
+
     if (expr.callee.kind !== 'Ident') return;
     const b = this.lookup(expr.callee.name);
     if (!b) return;
@@ -423,13 +462,13 @@ class Checker {
     const arity = b.arity ?? (b.struct ? { name: b.struct.name, min: b.struct.min, max: b.struct.max } : null);
     if (!arity) return;
 
-    const got = expr.args.length;
+    this.checkArity(arity, expr.args.length, expr.span);
+  }
+
+  private checkArity(arity: Arity, got: number, span: Span): void {
     if (got >= arity.min && got <= arity.max) return;
     const need = arity.min === arity.max ? `${arity.min}` : `от ${arity.min} до ${arity.max}`;
-    this.error(
-      `«${arity.name}» ожидает ${need} ${plural(arity.max)}, а получает ${got}`,
-      expr.span,
-    );
+    this.error(`«${arity.name}» ожидает ${need} ${plural(arity.max)}, а получает ${got}`, span);
   }
 
   private assign(expr: Extract<Expr, { kind: 'Assign' }>): void {
@@ -438,6 +477,9 @@ class Checker {
 
     if (target.kind === 'Ident') {
       const b = this.lookup(target.name);
+      // `x += 1` не только пишет, но и читает: без этого «объявлена и забыта»
+      // срабатывало бы на счётчике, который исправно наращивают.
+      if (b && expr.op !== null) b.used = true;
       if (!b) {
         this.error(
           `нельзя присвоить необъявленному «${target.name}» — начните со «let ${target.name} = ...»`,
@@ -493,6 +535,17 @@ class Checker {
 }
 
 // ---- вспомогательное ------------------------------------------------------
+
+/** Ближайшее по написанию имя из готового списка. */
+function nearestOf(name: string, known: string[]): string | null {
+  let best: string | null = null;
+  let bestDist = Infinity;
+  for (const k of known) {
+    const d = distance(name, k);
+    if (d < bestDist) { bestDist = d; best = k; }
+  }
+  return best && bestDist <= Math.max(1, Math.floor(name.length / 3)) ? best : null;
+}
 
 const bodyOf = (stmt: Stmt): Stmt[] => (stmt.kind === 'Block' ? stmt.body : [stmt]);
 

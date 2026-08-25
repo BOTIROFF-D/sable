@@ -53,6 +53,28 @@ function wantCount(fn: string, args: Value[], i: number, span: Span): number {
 
 const arg = (args: Value[], i: number): Value => (i < args.length ? args[i]! : null);
 
+/**
+ * Копия списка для обхода. Колбэк вправе менять исходный список прямо во время
+ * обхода (`xs.map(x -> xs.pop())`), и тогда методы JS оставляют в результате
+ * пустые ячейки — наружу вылезало бы `undefined`, значения без типа в языке.
+ * Обход по копии повторяет правило цикла `for`, где список тоже копируется.
+ */
+const snap = (l: Value[]): Value[] => l.slice();
+
+/**
+ * В языке нет бесконечности и «не числа» — то же правило, что для операторов.
+ * Иначе pow(0, -1) даёт inf там, где 1 / 0 честно ошибка.
+ */
+function finiteResult(fn: string, n: number, span: Span): number {
+  if (Number.isFinite(n)) return n;
+  throw runtimeError(
+    Number.isNaN(n)
+      ? `результат «${fn}» не является числом`
+      : `результат «${fn}» вышел за пределы представимых чисел`,
+    span,
+  );
+}
+
 // ---- глобальные функции ---------------------------------------------------
 
 export function installGlobals(interp: Interpreter): void {
@@ -108,14 +130,15 @@ export function installGlobals(interp: Interpreter): void {
     if (n < 0) throw runtimeError('корень из отрицательного числа не определён', span);
     return Math.sqrt(n);
   });
-  def('pow', 2, 2, (args, span) => wantNumber('pow', args, 0, span) ** wantNumber('pow', args, 1, span));
+  def('pow', 2, 2, (args, span) =>
+    finiteResult('pow', wantNumber('pow', args, 0, span) ** wantNumber('pow', args, 1, span), span));
 
   def('round', 1, 2, (args, span) => {
     const n = wantNumber('round', args, 0, span);
     const digits = args.length > 1 ? wantInt('round', args, 1, span) : 0;
     const k = 10 ** digits;
     // Половина округляется от нуля в обе стороны: round(2.5)=3, round(-2.5)=-3.
-    return (Math.sign(n) * Math.round(Math.abs(n) * k + Number.EPSILON)) / k;
+    return finiteResult('round', (Math.sign(n) * Math.round(Math.abs(n) * k + Number.EPSILON)) / k, span);
   });
 
   def('min', 1, Infinity, (args, span) => extremum('min', args, span, (a, b) => a < b));
@@ -130,7 +153,7 @@ export function installGlobals(interp: Interpreter): void {
     return Math.min(hi, Math.max(lo, n));
   });
 
-  def('exp', 1, 1, (args, span) => Math.exp(wantNumber('exp', args, 0, span)));
+  def('exp', 1, 1, (args, span) => finiteResult('exp', Math.exp(wantNumber('exp', args, 0, span)), span));
   def('log', 1, 2, (args, span) => {
     const n = wantNumber('log', args, 0, span);
     if (n <= 0) throw runtimeError(`логарифм определён только для положительных чисел, а получено ${repr(n)}`, span);
@@ -145,7 +168,8 @@ export function installGlobals(interp: Interpreter): void {
     return Math.log(n) / Math.log(base);
   });
 
-  def('hypot', 2, Infinity, (args, span) => Math.hypot(...args.map((_, i) => wantNumber('hypot', args, i, span))));
+  def('hypot', 2, Infinity, (args, span) =>
+    finiteResult('hypot', Math.hypot(...args.map((_, i) => wantNumber('hypot', args, i, span))), span));
   def('sin', 1, 1, (args, span) => Math.sin(wantNumber('sin', args, 0, span)));
   def('cos', 1, 1, (args, span) => Math.cos(wantNumber('cos', args, 0, span)));
   def('tan', 1, 1, (args, span) => Math.tan(wantNumber('tan', args, 0, span)));
@@ -175,6 +199,13 @@ export function installGlobals(interp: Interpreter): void {
     const step = args.length > 2 ? wantNumber('range', args, 2, span) : 1;
     if (step === 0) throw runtimeError('шаг range не может быть нулём', span);
     const [start, end] = b === null ? [0, a] : [a, b];
+    const count = Math.max(0, Math.ceil((end - start) / step));
+    if (!Number.isFinite(count) || count > MAX_ITEMS) {
+      throw runtimeError(
+        `range попросили построить ${Number.isFinite(count) ? count : 'бесконечно много'} элементов — предел ${MAX_ITEMS}`,
+        span,
+      );
+    }
     const out: Value[] = [];
     if (step > 0) for (let i = start; i < end; i += step) out.push(i);
     else for (let i = start; i > end; i += step) out.push(i);
@@ -331,7 +362,8 @@ function asMap(fn: string, v: Value, span: Span): Map<MapKey, Value> {
 }
 
 function asSeq(fn: string, v: Value, span: Span): Value[] {
-  if (Array.isArray(v)) return v;
+  // Копия, а не сам список: колбэк вправе менять исходный прямо во время обхода.
+  if (Array.isArray(v)) return v.slice();
   if (v instanceof DbgoRange) return v.toList();
   if (typeof v === 'string') return [...v];
   throw runtimeError(`«${fn}» ожидает список, строку или диапазон, а получила ${typeName(v)}`, span);
@@ -432,7 +464,7 @@ const STRING_METHODS: MethodTable = {
   repeat: m(1, 1, (s: string, a, sp) => {
     const n = wantInt('repeat', a, 0, sp);
     if (n < 0) throw runtimeError('число повторов не может быть отрицательным', sp);
-    return s.repeat(n);
+    return repeatText(s, n, sp);
   }),
   pad_start: m(1, 2, (s: string, a, sp) =>
     s.padStart(wantInt('pad_start', a, 0, sp), a.length > 1 ? wantString('pad_start', a, 1, sp) : ' ')),
@@ -504,14 +536,14 @@ const LIST_METHODS: MethodTable = {
     const [from, to] = sliceBounds('slice', l.length, a, sp);
     return l.slice(from, to);
   }),
-  map: m(1, 1, (l: Value[], a, sp, it) => l.map((x, i) => it.callCallback(a[0]!, [x, i], sp, 'map'))),
-  filter: m(1, 1, (l: Value[], a, sp, it) => l.filter((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'filter')))),
-  find: m(1, 1, (l: Value[], a, sp, it) => l.find((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'find'))) ?? null),
-  any: m(1, 1, (l: Value[], a, sp, it) => l.some((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'any')))),
-  all: m(1, 1, (l: Value[], a, sp, it) => l.every((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'all')))),
+  map: m(1, 1, (l: Value[], a, sp, it) => snap(l).map((x, i) => it.callCallback(a[0]!, [x, i], sp, 'map'))),
+  filter: m(1, 1, (l: Value[], a, sp, it) => snap(l).filter((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'filter')))),
+  find: m(1, 1, (l: Value[], a, sp, it) => snap(l).find((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'find'))) ?? null),
+  any: m(1, 1, (l: Value[], a, sp, it) => snap(l).some((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'any')))),
+  all: m(1, 1, (l: Value[], a, sp, it) => snap(l).every((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'all')))),
   reduce: m(2, 2, (l: Value[], a, sp, it) => {
     let acc: Value = a[1] ?? null;
-    l.forEach((x, i) => { acc = it.callCallback(a[0]!, [acc, x, i], sp, 'reduce'); });
+    snap(l).forEach((x, i) => { acc = it.callCallback(a[0]!, [acc, x, i], sp, 'reduce'); });
     return acc;
   }),
   is_empty: m(0, 0, (l: Value[]) => l.length === 0),
@@ -589,22 +621,22 @@ const LIST_METHODS: MethodTable = {
     const what = a[0]!;
     if (what instanceof DbgoFunction || what instanceof NativeFn) {
       let n = 0;
-      l.forEach((x, i) => { if (truthy(it.callCallback(what, [x, i], sp, 'count'))) n++; });
+      snap(l).forEach((x, i) => { if (truthy(it.callCallback(what, [x, i], sp, 'count'))) n++; });
       return n;
     }
     return l.filter((x) => equals(x, what)).length;
   }),
   sort_by: m(1, 1, (l: Value[], a, sp, it) => {
-    const keyed = l.map((x, i) => ({ x, key: it.callCallback(a[0]!, [x, i], sp, 'sort_by') }));
+    const keyed = snap(l).map((x, i) => ({ x, key: it.callCallback(a[0]!, [x, i], sp, 'sort_by') }));
     // Array.sort устойчива по стандарту: равные ключи сохраняют исходный порядок.
     keyed.sort((p, q) => keyCompare('sort_by', p.key, q.key, sp));
     return keyed.map((p) => p.x);
   }),
-  min_by: m(1, 1, (l: Value[], a, sp, it) => extremumBy('min_by', l, a[0]!, sp, it, -1)),
-  max_by: m(1, 1, (l: Value[], a, sp, it) => extremumBy('max_by', l, a[0]!, sp, it, 1)),
+  min_by: m(1, 1, (l: Value[], a, sp, it) => extremumBy('min_by', snap(l), a[0]!, sp, it, -1)),
+  max_by: m(1, 1, (l: Value[], a, sp, it) => extremumBy('max_by', snap(l), a[0]!, sp, it, 1)),
   group_by: m(1, 1, (l: Value[], a, sp, it) => {
     const out = new Map<MapKey, Value>();
-    l.forEach((x, i) => {
+    snap(l).forEach((x, i) => {
       const k = it.callCallback(a[0]!, [x, i], sp, 'group_by');
       if (typeof k !== 'string' && typeof k !== 'number' && typeof k !== 'boolean') {
         throw runtimeError(`функция в «group_by» должна вернуть ключ — строку, число или bool, а вернула ${typeName(k)}`, sp);
@@ -617,7 +649,7 @@ const LIST_METHODS: MethodTable = {
   }),
   sum_by: m(1, 1, (l: Value[], a, sp, it) => {
     let total = 0;
-    l.forEach((x, i) => {
+    snap(l).forEach((x, i) => {
       const v = it.callCallback(a[0]!, [x, i], sp, 'sum_by');
       if (typeof v !== 'number') throw runtimeError(`функция в «sum_by» должна вернуть число, а вернула ${typeName(v)}`, sp);
       total += v;
@@ -627,12 +659,12 @@ const LIST_METHODS: MethodTable = {
   partition: m(1, 1, (l: Value[], a, sp, it) => {
     const yes: Value[] = [];
     const no: Value[] = [];
-    l.forEach((x, i) => { (truthy(it.callCallback(a[0]!, [x, i], sp, 'partition')) ? yes : no).push(x); });
+    snap(l).forEach((x, i) => { (truthy(it.callCallback(a[0]!, [x, i], sp, 'partition')) ? yes : no).push(x); });
     return [yes, no];
   }),
   flat_map: m(1, 1, (l: Value[], a, sp, it) => {
     const out: Value[] = [];
-    l.forEach((x, i) => {
+    snap(l).forEach((x, i) => {
       const part = it.callCallback(a[0]!, [x, i], sp, 'flat_map');
       if (!Array.isArray(part)) {
         throw runtimeError(`функция в «flat_map» должна вернуть список, а вернула ${typeName(part)} — оберните значение в [ ]`, sp);
@@ -721,6 +753,22 @@ const RANGE_METHODS: MethodTable = {
     return n >= r.start && n < r.end;
   }),
 };
+
+/** Предел длины строки: за ним JS бросает свой RangeError, а сообщение у него чужое. */
+const MAX_TEXT = 100_000_000;
+
+/** Столько элементов ещё можно построить списком; дальше — просьба, которую не выполнить. */
+const MAX_ITEMS = 50_000_000;
+
+export function repeatText(s: string, n: number, span: Span): string {
+  if (s.length * n > MAX_TEXT) {
+    throw runtimeError(
+      `строка из ${s.length * n} символов слишком велика — предел ${MAX_TEXT}`,
+      span,
+    );
+  }
+  return s.repeat(n);
+}
 
 function sliceBounds(fn: string, length: number, args: Value[], span: Span): [number, number] {
   const norm = (n: number) => (n < 0 ? Math.max(0, length + n) : Math.min(n, length));

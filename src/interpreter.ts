@@ -3,7 +3,7 @@ import type { Expr, Param, Program, Stmt } from './ast.ts';
 import { DbgoError, runtimeError, type Span } from './errors.ts';
 import { Environment } from './environment.ts';
 import { ModuleLoader } from './modules.ts';
-import { findMethodEntry, getMethod, installGlobals, type MethodEntry } from './stdlib.ts';
+import { findMethodEntry, getMethod, installGlobals, repeatText, type MethodEntry } from './stdlib.ts';
 import {
   DbgoModule, NativeFn, DbgoFunction, DbgoRange, StructDef, StructInstance,
   asMapKey, charAt, charLength, equals, isCallable, repr, toStr, truthy, typeName,
@@ -37,6 +37,9 @@ type Signal = 0 | 1 | 2 | 3;
  * Поднимается через DBGO_MAX_DEPTH вместе с `node --stack-size=...`.
  */
 const MAX_DEPTH = Number(process.env.DBGO_MAX_DEPTH) || 900;
+
+/** Предел длины списка: за ним JS бросает свой RangeError с чужим сообщением. */
+const MAX_LIST = 50_000_000;
 
 export type Host = {
   /** Куда уходит print. Подменяется в тестах и REPL. */
@@ -119,9 +122,17 @@ export class Interpreter {
     return last;
   }
 
-  /** Срыв стека JS — не сбой рантайма, а слишком глубокое выражение в программе. */
+  /**
+   * Срыв стека JS — не сбой рантайма, а слишком глубокое выражение в программе.
+   * Но не всякий RangeError об этом: «строка слишком длинная» — тоже RangeError,
+   * и выдавать её за глубокую вложенность значит врать пользователю.
+   */
   private decorate(e: unknown): unknown {
-    if (e instanceof RangeError) return runtimeError('слишком глубокая вложенность вычислений');
+    if (e instanceof RangeError) {
+      return /call stack/i.test(e.message)
+        ? runtimeError('слишком глубокая вложенность вычислений')
+        : runtimeError(`слишком большое значение: ${e.message}`);
+    }
     return e;
   }
 
@@ -389,6 +400,18 @@ export class Interpreter {
   private range(expr: Extract<Expr, { kind: 'Range' }>): DbgoRange {
     const start = this.numberOperand(this.evaluate(expr.start), 'начало диапазона', expr.span);
     const end = this.numberOperand(this.evaluate(expr.end), 'конец диапазона', expr.span);
+    // За пределом точных целых прибавление единицы перестаёт двигать счётчик:
+    // такой цикл не закончится не «когда-нибудь», а никогда. Бесконечность — тот же случай.
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+      throw runtimeError('границы диапазона должны быть обычными числами', expr.span);
+    }
+    if (Math.abs(start) > Number.MAX_SAFE_INTEGER || Math.abs(end) > Number.MAX_SAFE_INTEGER) {
+      throw runtimeError(
+        `границы диапазона больше ${Number.MAX_SAFE_INTEGER} — за этим пределом ` +
+        'счётчик перестаёт расти, и цикл не закончится никогда',
+        expr.span,
+      );
+    }
     return new DbgoRange(start, end);
   }
 
@@ -399,16 +422,26 @@ export class Interpreter {
   }
 
   private assign(expr: Extract<Expr, { kind: 'Assign' }>): Value {
-    const value = this.evaluate(expr.value);
     const target = expr.target;
+    const op = expr.op;
 
+    // Части цели вычисляются ровно один раз. Раньше «a[i] += v» разворачивалось
+    // парсером в «a[i] = a[i] + v», и i считался дважды: при побочном эффекте
+    // в индексе читали одну ячейку, а писали в другую.
     if (target.kind === 'Ident') {
+      const value = op === null
+        ? this.evaluate(expr.value)
+        : this.binary(op, this.env.get(target.name, target.span), this.evaluate(expr.value), expr.span);
       this.env.assign(target.name, value, expr.span);
       return value;
     }
 
     if (target.kind === 'Get') {
       const obj = this.evaluate(target.object);
+      const value = op === null
+        ? this.evaluate(expr.value)
+        : this.binary(op, this.getMember(obj, target.name, target.span), this.evaluate(expr.value), expr.span);
+
       if (obj instanceof DbgoModule) {
         throw runtimeError(`имена модуля «${obj.alias}» менять нельзя`, expr.span);
       }
@@ -429,12 +462,15 @@ export class Interpreter {
     if (target.kind !== 'Index') {
       throw runtimeError('присваивать можно только переменной, полю или элементу', expr.span);
     }
+
     const obj = this.evaluate(target.object);
     const key = this.evaluate(target.index);
+    const value = op === null
+      ? this.evaluate(expr.value)
+      : this.binary(op, this.getIndex(obj, key, target.span), this.evaluate(expr.value), expr.span);
 
     if (Array.isArray(obj)) {
-      const i = this.listIndex(obj, key, expr.span);
-      obj[i] = value;
+      obj[this.listIndex(obj, key, expr.span)] = value;
       return value;
     }
     if (obj instanceof Map) {
@@ -459,22 +495,22 @@ export class Interpreter {
     // не проходя разбор типов для строк, списков и структур.
     if (typeof l === 'number' && typeof r === 'number') {
       switch (op) {
-        case '+': return l + r;
-        case '-': return l - r;
-        case '*': return l * r;
+        case '+': return finite(l + r, op, span);
+        case '-': return finite(l - r, op, span);
+        case '*': return finite(l * r, op, span);
         case '<': return l < r;
         case '<=': return l <= r;
         case '>': return l > r;
         case '>=': return l >= r;
         case '==': return l === r;
         case '!=': return l !== r;
-        case '^': return l ** r;
+        case '^': return finite(l ** r, op, span);
         case '/':
           if (r === 0) throw runtimeError('деление на ноль', span);
-          return l / r;
+          return finite(l / r, op, span);
         case '%':
           if (r === 0) throw runtimeError('остаток от деления на ноль', span);
-          return l % r;
+          return finite(l % r, op, span);
       }
     }
 
@@ -501,6 +537,12 @@ export class Interpreter {
       if (typeof l === 'number' && typeof r === 'string') return this.repeatStr(r, l, span);
       if (Array.isArray(l) && typeof r === 'number') {
         const n = this.wholeCount(r, span);
+        if (l.length * n > MAX_LIST) {
+          throw runtimeError(
+            `список из ${l.length * n} элементов слишком велик — предел ${MAX_LIST}`,
+            span,
+          );
+        }
         const out: Value[] = [];
         for (let i = 0; i < n; i++) out.push(...l);
         return out;
@@ -518,15 +560,15 @@ export class Interpreter {
     const b = this.numberOperand(r, `правый операнд «${op}»`, span);
 
     switch (op) {
-      case '-': return a - b;
-      case '*': return a * b;
+      case '-': return finite(a - b, op, span);
+      case '*': return finite(a * b, op, span);
       case '/':
         if (b === 0) throw runtimeError('деление на ноль', span);
-        return a / b;
+        return finite(a / b, op, span);
       case '%':
         if (b === 0) throw runtimeError('остаток от деления на ноль', span);
-        return a % b;
-      case '^': return a ** b;
+        return finite(a % b, op, span);
+      case '^': return finite(a ** b, op, span);
       case '<': return a < b;
       case '<=': return a <= b;
       case '>': return a > b;
@@ -543,7 +585,7 @@ export class Interpreter {
   }
 
   private repeatStr(s: string, n: number, span: Span): string {
-    return s.repeat(this.wholeCount(n, span));
+    return repeatText(s, this.wholeCount(n, span), span);
   }
 
   // ---- доступ к членам ----------------------------------------------------
@@ -762,6 +804,21 @@ function describeError(e: DbgoError): Value {
   map.set('line', e.span?.line ?? 0);
   map.set('column', e.span?.col ?? 0);
   return map;
+}
+
+/**
+ * В языке нет бесконечности и «не числа»: раз деление на ноль — ошибка,
+ * то и переполнение при умножении или возведении в степень должно быть ошибкой.
+ * Иначе inf расползается по программе молча и всплывает где-нибудь в JSON как null.
+ */
+function finite(n: number, op: string, span: Span): number {
+  if (Number.isFinite(n)) return n;
+  throw runtimeError(
+    Number.isNaN(n)
+      ? `результат «${op}» не является числом`
+      : `результат «${op}» вышел за пределы представимых чисел`,
+    span,
+  );
 }
 
 /**

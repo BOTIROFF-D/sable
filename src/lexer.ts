@@ -18,6 +18,12 @@ export class Lexer {
   private tokens: Token[] = [];
   /** Глубина () и [] — внутри них перевод строки незначим. */
   private depth = 0;
+  /**
+   * Глубина скобок, отложенная на входе в «{». Внутри блока перевод строки снова
+   * значим, даже если блок стоит в аргументе вызова: тело функции, записанное
+   * в скобках вызова, иначе слиплось бы в одну инструкцию.
+   */
+  private depthStack: number[] = [];
 
   constructor(source: string, file = '<input>', startLine = 1, startCol = 1) {
     this.src = source;
@@ -84,8 +90,13 @@ export class Lexer {
       case ')': this.depth = Math.max(0, this.depth - 1); return this.push('RPAREN', c, span);
       case '[': this.depth++; return this.push('LBRACKET', c, span);
       case ']': this.depth = Math.max(0, this.depth - 1); return this.push('RBRACKET', c, span);
-      case '{': return this.push('LBRACE', c, span);
-      case '}': return this.push('RBRACE', c, span);
+      case '{':
+        this.depthStack.push(this.depth);
+        this.depth = 0;
+        return this.push('LBRACE', c, span);
+      case '}':
+        this.depth = this.depthStack.pop() ?? 0;
+        return this.push('RBRACE', c, span);
       case ',': return this.push('COMMA', c, span);
       case ':': return this.push('COLON', c, span);
       case ';': return this.push('SEMI', c, span);
@@ -237,6 +248,24 @@ export class Lexer {
         for (;;) {
           if (this.pos >= this.src.length) throw lexError('вставка ${...} не закрыта', exprSpan);
           const ch = this.peek();
+
+          // Внутри вставки может быть своя строка, а в ней — фигурные скобки.
+          // Считать их за скобки вставки значит оборвать её посреди литерала.
+          if (ch === '"' || ch === "'" || ch === '`') {
+            source += this.advance();
+            for (;;) {
+              if (this.pos >= this.src.length) throw lexError('строка внутри вставки ${...} не закрыта', exprSpan);
+              const inner = this.peek();
+              if (inner === '\n' && ch !== '`') {
+                throw lexError('строка внутри вставки ${...} не закрыта до конца строки', exprSpan);
+              }
+              if (inner === '\\') { source += this.advance(); source += this.advance(); continue; }
+              source += this.advance();
+              if (inner === ch) break;
+            }
+            continue;
+          }
+
           if (ch === '{') braces++;
           if (ch === '}') { braces--; if (braces === 0) { this.advance(); break; } }
           source += this.advance();
