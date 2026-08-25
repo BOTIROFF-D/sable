@@ -120,21 +120,42 @@
   .status.bad { color: var(--alarm); }
   .status.busy { color: var(--accent); }
 
-  textarea, .out {
-    flex: 1;
+  .editor { position: relative; flex: 1; min-height: 0; }
+
+  textarea, .hl, .out {
     margin: 0;
     padding: 0.4rem clamp(1rem, 4vw, 2.25rem) 1.5rem;
-    background: transparent;
-    color: var(--ink);
     font-family: var(--mono);
     font-size: 0.83rem;
     line-height: 1.62;
     border: 0;
-    resize: none;
     tab-size: 2;
+  }
+
+  /* Подсветка лежит слоем под полем ввода: у обоих одинаковые метрики,
+     иначе символы разъедутся. Текст в поле прозрачный, видна каретка. */
+  textarea, .hl { position: absolute; inset: 0; white-space: pre; overflow: auto; }
+  .hl { color: var(--ink); pointer-events: none; }
+  textarea {
+    background: transparent;
+    color: transparent;
+    caret-color: var(--accent);
+    resize: none;
+  }
+  textarea::selection { background: #E0A64A44; }
+
+  .hl .k { color: #E0A64A; }
+  .hl .s { color: #93B36A; }
+  .hl .n { color: #C8A2D8; }
+  .hl .l { color: #7FB3C8; }
+  .hl .c { color: #6E7761; font-style: italic; }
+
+  .out {
+    flex: 1;
+    background: transparent;
+    color: var(--ink-soft);
     overflow: auto;
   }
-  textarea { white-space: pre; }
   .out { white-space: pre-wrap; word-break: break-word; color: var(--ink-soft); }
   .out.bad { color: var(--alarm); }
 
@@ -165,6 +186,7 @@
   <button class="primary" id="run" type="button">Выполнить</button>
   <button id="fmt" type="button">Отформатировать</button>
   <button id="check" type="button">Проверить без запуска</button>
+  <button id="share" type="button">Поделиться</button>
   <div class="spacer"></div>
   <span class="shortcut">Ctrl/⌘ + Enter — выполнить</span>
 </div>
@@ -172,7 +194,10 @@
 <main>
   <section class="pane">
     <div class="pane-head"><span>Программа</span></div>
-    <textarea id="code" spellcheck="false" aria-label="Код на Sable"></textarea>
+    <div class="editor">
+      <pre class="hl" id="hl" aria-hidden="true"></pre>
+      <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Код на Sable"></textarea>
+    </div>
   </section>
   <section class="pane">
     <div class="pane-head"><span>Вывод</span><span class="status" id="status"></span></div>
@@ -195,7 +220,10 @@
     ['Перехват ошибок', `fn снять(баланс, сумма) {\n  if сумма > баланс { error("недостаточно средств: нужно \${сумма}, есть \${баланс}") }\n  return баланс - сумма\n}\n\nprint(снять(100, 30))\n\ntry {\n  print(снять(100, 500))\n} catch e {\n  print("не вышло:", e.message)\n}`],
   ];
 
+  const { highlight } = await import('./dist/highlight.js');
+
   const code = document.getElementById('code');
+  const hl = document.getElementById('hl');
   const out = document.getElementById('out');
   const status = document.getElementById('status');
   const picker = document.getElementById('examples');
@@ -207,9 +235,78 @@
     picker.append(option);
   }
 
-  const load = (i) => { code.value = EXAMPLES[i][1]; say('', ''); out.textContent = 'Нажмите «Выполнить».'; out.className = 'out'; };
+  /** Подсветка перерисовывается на каждый ввод: задержка здесь заметнее лага. */
+  const MAX_PAINT = 20000;
+  function paint() {
+    const src = code.value;
+    hl.innerHTML = src.length > MAX_PAINT
+      ? src.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+      // Хвостовой перенос иначе съедается, и последняя строка не рисуется.
+      : highlight(src) + '\n';
+    hl.scrollTop = code.scrollTop;
+    hl.scrollLeft = code.scrollLeft;
+  }
+
+  function setSource(text) {
+    code.value = text;
+    paint();
+    say('', '');
+    out.textContent = 'Нажмите «Выполнить».';
+    out.className = 'out';
+  }
+
+  const load = (i) => setSource(EXAMPLES[i][1]);
   picker.addEventListener('change', () => load(picker.selectedIndex));
-  load(0);
+
+  // ---- обмен ссылками -----------------------------------------------------
+  //
+  // Программа кладётся в хвост адреса. Так её можно бросить в комментарий
+  // или коллеге, и человек откроет ровно то, что видел автор.
+
+  const pack = (text) => btoa(String.fromCharCode(...new TextEncoder().encode(text)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  const unpack = (packed) => {
+    const b64 = packed.replace(/-/g, '+').replace(/_/g, '/');
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  };
+
+  const SAVED = 'sable.playground';
+
+  function restore() {
+    const hash = location.hash.replace(/^#код=/, '');
+    if (hash !== '' && hash !== location.hash) {
+      try { setSource(unpack(hash)); return; } catch { /* испорченная ссылка — не беда */ }
+    }
+    try {
+      const kept = localStorage.getItem(SAVED);
+      if (kept !== null && kept !== '') { setSource(kept); return; }
+    } catch { /* приватный режим — переживём */ }
+    load(0);
+  }
+
+  document.getElementById('share').addEventListener('click', async () => {
+    const url = location.origin + location.pathname + '#код=' + pack(code.value);
+    history.replaceState(null, '', url);
+    try {
+      await navigator.clipboard.writeText(url);
+      say('ссылка скопирована', 'ok');
+    } catch {
+      say('ссылка в адресной строке', 'ok');
+    }
+  });
+
+  code.addEventListener('input', () => {
+    paint();
+    try { localStorage.setItem(SAVED, code.value); } catch { /* переживём */ }
+  });
+  code.addEventListener('scroll', () => {
+    hl.scrollTop = code.scrollTop;
+    hl.scrollLeft = code.scrollLeft;
+  });
+
+  restore();
 
   function say(text, kind) {
     status.textContent = text;
@@ -225,7 +322,7 @@
     worker.onmessage = (event) => {
       clearTimeout(timer);
       const { ok, text, replaceSource } = event.data;
-      if (replaceSource !== undefined) code.value = replaceSource;
+      if (replaceSource !== undefined) { code.value = replaceSource; paint(); }
       out.textContent = text;
       out.className = 'out' + (ok ? '' : ' bad');
       say(ok ? 'готово' : 'с ошибкой', ok ? 'ok' : 'bad');
@@ -274,6 +371,7 @@
       const { selectionStart: s, selectionEnd: t, value } = code;
       code.value = value.slice(0, s) + '  ' + value.slice(t);
       code.selectionStart = code.selectionEnd = s + 2;
+      paint();
     }
   });
 </script>

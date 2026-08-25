@@ -9,11 +9,11 @@
   "scripts": {
     "sable": "node src/cli.ts",
     "repl": "node src/cli.ts",
-    "test": "node tests/run.ts && node tests/checker.ts && node tests/docs.ts && node tests/grammar.ts && node tests/format.ts",
+    "test": "node tests/run.ts && node tests/checker.ts && node tests/docs.ts && node tests/grammar.ts && node tests/format.ts && node tests/web.ts",
     "check": "node src/cli.ts --check",
     "fmt": "node src/cli.ts fmt",
     "typecheck": "tsc --noEmit",
-    "build:web": "esbuild web/worker.ts --bundle --format=esm --platform=browser --minify --alias:node:fs=./web/shims/node-fs.ts --alias:node:path=./web/shims/node-path.ts --outfile=web/dist/worker.js"
+    "build:web": "esbuild web/worker.ts --bundle --format=esm --platform=browser --minify --alias:node:fs=./web/shims/node-fs.ts --alias:node:path=./web/shims/node-path.ts --inject:./web/shims/node-globals.ts --outfile=web/dist/worker.js && esbuild web/highlight.ts --bundle --format=esm --platform=browser --minify --alias:node:fs=./web/shims/node-fs.ts --alias:node:path=./web/shims/node-path.ts --inject:./web/shims/node-globals.ts --outfile=web/dist/highlight.js"
   },
   "engines": {
     "node": ">=22.18"

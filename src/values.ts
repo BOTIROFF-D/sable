@@ -1,6 +1,6 @@
 import type { Param } from './ast.ts';
 import { runtimeError, type Span } from './errors.ts';
-import type { Environment } from './environment.ts';
+import type { Environment, Shape } from './environment.ts';
 
 export type MapKey = string | number | boolean;
 
@@ -13,6 +13,16 @@ export type CompiledFn = {
   run: (env: Environment) => number;
   /** Значения по умолчанию по позициям параметров; null — параметр обязателен. */
   defaults: Array<((env: Environment) => Value) | null>;
+  /**
+   * Форма области вызова: `self`, параметры и объявления тела по номерам слотов.
+   * null — объявлять нечего, и тогда тело выполняется прямо в замкнутой области,
+   * без выделения ещё одного объекта на каждый вызов.
+   */
+  shape: Shape | null;
+  /** Куда класть аргументы: номер слота на каждый параметр по порядку. */
+  paramSlots: number[];
+  /** Номер слота под `self` у метода; -1 — обычная функция. */
+  selfSlot: number;
 };
 
 export class SableFunction {

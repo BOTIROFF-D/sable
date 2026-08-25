@@ -1,7 +1,11 @@
 import { join } from 'node:path';
 import type { Expr, Param, Program, Stmt } from './ast.ts';
 import { SableError, runtimeError, type Span } from './errors.ts';
-import { Environment } from './environment.ts';
+import {
+  Environment, UNSET, makeShape,
+  constAssign, redeclared,
+  type Shape,
+} from './environment.ts';
 import { ModuleLoader } from './modules.ts';
 import { findMethodEntry, getMethod, installGlobals, repeatText, type MethodEntry } from './stdlib.ts';
 import {
@@ -29,6 +33,51 @@ type Signal = 0 | 1 | 2 | 3;
 type ExprFn = (env: Environment) => Value;
 /** Скомпилированная инструкция: даёт код сигнала — обычный ход, return, break, continue. */
 type StmtFn = (env: Environment) => Signal;
+
+/** Одно объявление в лексической области: имя и можно ли его менять. */
+type Decl = { name: string; mutable: boolean };
+
+/** Найденное имя: сколько областей подняться и какой слот внутри. */
+type Resolved = { depth: number; slot: number; mutable: boolean };
+
+/**
+ * Имена, объявляемые прямо в этом списке инструкций.
+ *
+ * Внутрь вложенных областей заходить нельзя и не нужно: тела `if`, `while`,
+ * `for`, `try` и голые блоки — это всегда `Block`, у которого своя область,
+ * а тела функций и структур компилируются отдельно.
+ */
+function declsOf(body: Stmt[], out: Decl[]): Decl[] {
+  for (let i = 0; i < body.length; i++) {
+    const s = body[i]!;
+    if (s.kind === 'VarDecl') out.push({ name: s.name, mutable: s.mutable });
+    else if (s.kind === 'FnDecl' || s.kind === 'StructDecl') out.push({ name: s.name, mutable: false });
+    else if (s.kind === 'Import') out.push({ name: s.alias, mutable: false });
+  }
+  return out;
+}
+
+/** Подняться на нужное число областей вверх; глубина 0 разобрана при компиляции. */
+function envUp(env: Environment, depth: number): Environment {
+  let e = env;
+  for (let i = 0; i < depth; i++) e = e.parent!;
+  return e;
+}
+
+/**
+ * Запись в слот. Пустой слот означает, что объявление ещё не выполнялось, —
+ * тогда присваивание идёт наружу по имени, как ходило раньше: там имя может
+ * оказаться объявленным, а если нет — прозвучит прежнее «нельзя присвоить
+ * необъявленному». Изменяемость слота известна с компиляции.
+ */
+function store(
+  from: Environment, owner: Environment,
+  slot: number, v: Value, mutable: boolean, name: string, span: Span,
+): void {
+  if (owner.slots[slot] === UNSET) { from.assign(name, v, span); return; }
+  if (!mutable) throw constAssign(name, span);
+  owner.slots[slot] = v;
+}
 
 /**
  * `break`/`continue` внутри функции обрабатываются значением, но вырваться за
@@ -70,6 +119,14 @@ export class Interpreter {
   private signalSpan: Span | null = null;
   /** Абсолютный путь к файлу, который выполняется сейчас — от него считаются пути import. */
   private currentFile: string;
+  /**
+   * Стек лексических областей — живёт только на время компиляции.
+   * Пустой стек означает «мы на верхнем уровне»: глобальная область, верхний
+   * уровень модуля и REPL пополняются во время выполнения, там имена по-прежнему
+   * ищутся по имени. Компиляция всегда заканчивается до выполнения, поэтому к
+   * моменту `import` (а значит и вложенной компиляции модуля) стек снова пуст.
+   */
+  private scopes: Shape[] = [];
 
   constructor(host: Host = { write: (t) => process.stdout.write(t) }, entryFile = join(process.cwd(), '<input>')) {
     this.builtins = new Environment(null, true);
@@ -147,6 +204,53 @@ export class Interpreter {
   // вычисление уходил разбор узла в switch; теперь разбор случается однажды,
   // а в горячем цикле остаётся только вызов готовой функции.
 
+  // ---- разрешение имён ----------------------------------------------------
+  //
+  // Слоты выделяются заранее, по полному списку объявлений области, — поэтому
+  // замыкание, созданное выше объявления, всё равно попадёт в нужный слот, а
+  // обращение до заполнения даст ту же ошибку «имя не определено», что и раньше.
+
+  /**
+   * Открыть лексическую область. Область без единого объявления не заводится
+   * вовсе: ей не в чем хранить имена, а лишний объект на каждый виток `while`
+   * или вход в `if` стоит дороже всего остального в теле.
+   */
+  private pushScope(decls: Decl[]): Shape | null {
+    if (decls.length === 0) return null;
+    const names: string[] = [];
+    const mutables: boolean[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < decls.length; i++) {
+      const d = decls[i]!;
+      // Имя, объявленное дважды, делит один слот: второе объявление увидит его
+      // заполненным и скажет «уже объявлено» — ровно там же, где говорило раньше.
+      if (seen.has(d.name)) continue;
+      seen.add(d.name);
+      names.push(d.name);
+      mutables.push(d.mutable);
+    }
+    const shape = makeShape(names, mutables);
+    this.scopes.push(shape);
+    return shape;
+  }
+
+  /** Где лежит имя: (глубина, слот). null — имя глобальное, встроенное или из модуля. */
+  private resolve(name: string): Resolved | null {
+    const scopes = this.scopes;
+    for (let d = scopes.length - 1, depth = 0; d >= 0; d--, depth++) {
+      const slot = scopes[d]!.index.get(name);
+      if (slot !== undefined) return { depth, slot, mutable: scopes[d]!.mutables[slot]! };
+    }
+    return null;
+  }
+
+  /** Слот объявления в текущей области; -1 — верхний уровень, объявляем по имени. */
+  private declSlot(name: string): number {
+    const scopes = this.scopes;
+    if (scopes.length === 0) return -1;
+    return scopes[scopes.length - 1]!.index.get(name) ?? -1;
+  }
+
   private compileBlock(body: Stmt[]): StmtFn {
     const fns: StmtFn[] = new Array(body.length);
     for (let i = 0; i < body.length; i++) fns[i] = this.compileStmt(body[i]!);
@@ -162,10 +266,27 @@ export class Interpreter {
     };
   }
 
-  /** Тело функции и её значения по умолчанию — общие для всех её экземпляров. */
-  private compileFn(params: Param[], body: Stmt[]): CompiledFn {
+  /**
+   * Тело функции и её значения по умолчанию — общие для всех её экземпляров.
+   *
+   * Область вызова у функции одна на всё: `self`, параметры и объявления тела
+   * лежат в ней рядом — так же, как раньше их складывал `define`.
+   */
+  private compileFn(params: Param[], body: Stmt[], hasSelf = false): CompiledFn {
+    const decls: Decl[] = [];
+    if (hasSelf) decls.push({ name: 'self', mutable: false });
+    for (let i = 0; i < params.length; i++) decls.push({ name: params[i]!.name, mutable: true });
+    declsOf(body, decls);
+
+    const shape = this.pushScope(decls);
+    // Значения по умолчанию считаются в области вызова — они вправе ссылаться
+    // на другие параметры, поэтому компилируются внутри той же области.
     const defaults: Array<ExprFn | null> = params.map((p) => (p.def ? this.compileExpr(p.def) : null));
-    return { run: this.compileBlock(body), defaults };
+    const paramSlots = shape === null ? [] : params.map((p) => shape.index.get(p.name)!);
+    const run = this.compileBlock(body);
+    if (shape !== null) this.scopes.pop();
+
+    return { run, defaults, shape, paramSlots, selfSlot: hasSelf ? shape!.index.get('self')! : -1 };
   }
 
   private compileStmt(stmt: Stmt): StmtFn {
@@ -178,7 +299,18 @@ export class Interpreter {
       case 'VarDecl': {
         const init = this.compileExpr(stmt.init);
         const { name, mutable, span } = stmt;
-        return (env) => { env.define(name, init(env), mutable, span); return NORMAL; };
+        const slot = this.declSlot(name);
+        if (slot < 0) {
+          return (env) => { env.define(name, init(env), mutable, span); return NORMAL; };
+        }
+        return (env) => {
+          // Порядок тот же, что был у define: сначала считается значение,
+          // и только потом выясняется, что имя уже занято.
+          const v = init(env);
+          if (env.slots[slot] !== UNSET) throw redeclared(name, span);
+          env.slots[slot] = v;
+          return NORMAL;
+        };
       }
 
       case 'If': {
@@ -192,8 +324,14 @@ export class Interpreter {
       }
 
       case 'Block': {
+        const shape = this.pushScope(declsOf(stmt.body, []));
         const body = this.compileBlock(stmt.body);
-        return (env) => body(new Environment(env));
+        // Блок, который ничего не объявляет, выполняется прямо во внешней области:
+        // складывать в неё всё равно нечего. Тело `while` или `if` — как раз такой
+        // блок, и раньше на каждый его виток уходил лишний объект.
+        if (shape === null) return body;
+        this.scopes.pop();
+        return (env) => body(new Environment(env, false, shape));
       }
 
       case 'Return': {
@@ -234,35 +372,68 @@ export class Interpreter {
       case 'FnDecl': {
         const code = this.compileFn(stmt.params, stmt.body);
         const { name, params, span } = stmt;
+        const slot = this.declSlot(name);
+        if (slot < 0) {
+          return (env) => {
+            env.define(name, new SableFunction(name, params, code, env), false, span);
+            return NORMAL;
+          };
+        }
         return (env) => {
-          env.define(name, new SableFunction(name, params, code, env), false, span);
+          if (env.slots[slot] !== UNSET) throw redeclared(name, span);
+          env.slots[slot] = new SableFunction(name, params, code, env);
           return NORMAL;
         };
       }
 
       case 'StructDecl': {
         const { name, fields, span } = stmt;
+        // Значения полей по умолчанию считаются не там, где структура объявлена,
+        // а в отдельной области-потомке глобальной, которая наполняется полями по
+        // ходу дела (см. construct). Область растущая, поэтому на время их
+        // компиляции лексический стек откладывается — имена там ищутся по имени.
+        const outer = this.scopes;
+        this.scopes = [];
         const fieldDefaults: Array<ExprFn | null> = fields.map((f) => (f.def ? this.compileExpr(f.def) : null));
+        this.scopes = outer;
+
         const methods = stmt.methods.map((m) => ({
           name: m.name,
           params: m.params,
-          code: this.compileFn(m.params, m.body),
+          code: this.compileFn(m.params, m.body, true),
         }));
-        return (env) => {
+        const slot = this.declSlot(name);
+        const make = (env: Environment): StructDef => {
           const table = new Map<string, SableFunction>();
           const def = new StructDef(name, fields, table, fieldDefaults);
           for (const m of methods) {
             table.set(m.name, new SableFunction(`${name}.${m.name}`, m.params, m.code, env));
           }
-          env.define(name, def, false, span);
+          return def;
+        };
+        if (slot < 0) {
+          return (env) => { env.define(name, make(env), false, span); return NORMAL; };
+        }
+        return (env) => {
+          if (env.slots[slot] !== UNSET) throw redeclared(name, span);
+          env.slots[slot] = make(env);
           return NORMAL;
         };
       }
 
       case 'Import': {
         const { path, alias, span } = stmt;
+        const slot = this.declSlot(alias);
+        if (slot < 0) {
+          return (env) => {
+            env.define(alias, this.modules.load(this, path, this.currentFile, alias, span), false, span);
+            return NORMAL;
+          };
+        }
         return (env) => {
-          env.define(alias, this.modules.load(this, path, this.currentFile, alias, span), false, span);
+          const mod = this.modules.load(this, path, this.currentFile, alias, span);
+          if (env.slots[slot] !== UNSET) throw redeclared(alias, span);
+          env.slots[slot] = mod;
           return NORMAL;
         };
       }
@@ -270,14 +441,22 @@ export class Interpreter {
   }
 
   private compileFor(stmt: Extract<Stmt, { kind: 'For' }>): StmtFn {
+    // Последовательность считается снаружи цикла — до того, как открыта его область.
     const iterable = this.compileExpr(stmt.iterable);
-    const body = this.compileBlock((stmt.body as Extract<Stmt, { kind: 'Block' }>).body);
+    const inner = (stmt.body as Extract<Stmt, { kind: 'Block' }>).body;
     const { name, span } = stmt;
+
+    // Переменная цикла и объявления тела живут в одной области — так же, как
+    // и раньше: тело `for` своей области никогда не заводило.
+    const shape = this.pushScope(declsOf(inner, [{ name, mutable: true }]))!;
+    const body = this.compileBlock(inner);
+    this.scopes.pop();
+    const varSlot = shape.index.get(name)!;
 
     // Своя область на каждый виток: замыкания внутри цикла ловят разные значения.
     const step = (outer: Environment, item: Value): Signal => {
-      const env = new Environment(outer);
-      env.define(name, item, true);
+      const env = new Environment(outer, false, shape);
+      env.slots[varSlot] = item;
       return body(env);
     };
 
@@ -311,20 +490,26 @@ export class Interpreter {
    * перестал бы выходить из функции.
    */
   private compileTry(stmt: Extract<Stmt, { kind: 'Try' }>): StmtFn {
+    const bodyShape = this.pushScope(declsOf(stmt.body, []));
     const body = this.compileBlock(stmt.body);
-    const handler = this.compileBlock(stmt.handler);
+    if (bodyShape !== null) this.scopes.pop();
+
     const param = stmt.param;
+    const handlerShape = this.pushScope(declsOf(stmt.handler, param ? [{ name: param, mutable: false }] : []));
+    const handler = this.compileBlock(stmt.handler);
+    if (handlerShape !== null) this.scopes.pop();
+    const paramSlot = param && handlerShape ? handlerShape.index.get(param)! : -1;
 
     return (env) => {
       const depthBefore = this.depth;
       try {
-        return body(new Environment(env));
+        return body(bodyShape === null ? env : new Environment(env, false, bodyShape));
       } catch (e) {
         if (!(e instanceof SableError) || e.stage !== 'runtime') throw e;
         // Кадры вызовов, оборванных ошибкой, снимаем — обработчик выполняется на своём уровне.
         this.depth = depthBefore;
-        const caught = new Environment(env);
-        if (param) caught.define(param, describeError(e), false);
+        const caught = handlerShape === null ? env : new Environment(env, false, handlerShape);
+        if (paramSlot >= 0) caught.slots[paramSlot] = describeError(e);
         return handler(caught);
       }
     };
@@ -350,7 +535,38 @@ export class Interpreter {
     switch (expr.kind) {
       case 'Ident': {
         const { name, span } = expr;
-        return (env) => env.get(name, span);
+        const found = this.resolve(name);
+        // Имя не из лексической области — глобальное, встроенное или из модуля:
+        // такие области растут по ходу выполнения, там поиск остаётся по имени.
+        // Но начинать его можно сразу снаружи всех открытых лексических областей.
+        if (found === null) {
+          const up = this.scopes.length;
+          if (up === 0) return (env) => env.get(name, span);
+          return (env) => env.outerGet(up, name, span);
+        }
+
+        // Слот выделен заранее, но заполняется только объявлением. Пока он пуст,
+        // имени здесь ещё нет — и поиск обязан пойти наружу ровно так, как ходил
+        // до разбора по слотам: снаружи имя может быть объявлено и раньше.
+        // Если и там его нет, `get` скажет то же самое, что говорил всегда.
+        const slot = found.slot;
+        switch (found.depth) {
+          case 0: return (env) => {
+            const v = env.slots[slot];
+            return v === UNSET ? env.get(name, span) : v as Value;
+          };
+          case 1: return (env) => {
+            const v = env.parent!.slots[slot];
+            return v === UNSET ? env.get(name, span) : v as Value;
+          };
+          default: {
+            const depth = found.depth;
+            return (env) => {
+              const v = envUp(env, depth).slots[slot];
+              return v === UNSET ? env.get(name, span) : v as Value;
+            };
+          }
+        }
       }
 
       case 'Number': {
@@ -544,12 +760,51 @@ export class Interpreter {
 
     if (target.kind === 'Ident') {
       const { name, span: nameSpan } = target;
+      const found = this.resolve(name);
+      if (found !== null) {
+        const { depth, slot, mutable } = found;
+        // Изменяемость слота известна на этапе компиляции — искать её на каждом
+        // присваивании больше не нужно, остаётся проверка «слот уже заполнен».
+        if (op === null) {
+          if (depth === 0) {
+            return (env) => { const v = value(env); store(env, env, slot, v, mutable, name, span); return v; };
+          }
+          return (env) => {
+            const v = value(env);
+            store(env, envUp(env, depth), slot, v, mutable, name, span);
+            return v;
+          };
+        }
+        const read = this.compileExpr(target);
+        if (depth === 0) {
+          return (env) => {
+            const v = this.binary(op, read(env), value(env), span);
+            store(env, env, slot, v, mutable, name, span);
+            return v;
+          };
+        }
+        return (env) => {
+          const v = this.binary(op, read(env), value(env), span);
+          store(env, envUp(env, depth), slot, v, mutable, name, span);
+          return v;
+        };
+      }
+
+      const up = this.scopes.length;
       if (op === null) {
-        return (env) => { const v = value(env); env.assign(name, v, span); return v; };
+        if (up === 0) return (env) => { const v = value(env); env.assign(name, v, span); return v; };
+        return (env) => { const v = value(env); env.outerAssign(up, name, v, span); return v; };
+      }
+      if (up === 0) {
+        return (env) => {
+          const v = this.binary(op, env.get(name, nameSpan), value(env), span);
+          env.assign(name, v, span);
+          return v;
+        };
       }
       return (env) => {
-        const v = this.binary(op, env.get(name, nameSpan), value(env), span);
-        env.assign(name, v, span);
+        const v = this.binary(op, env.outerGet(up, name, nameSpan), value(env), span);
+        env.outerAssign(up, name, v, span);
         return v;
       };
     }
@@ -832,13 +1087,20 @@ export class Interpreter {
       );
     }
 
-    const env = new Environment(fn.closure);
-    if (fn.self) env.define('self', fn.self, false);
-    this.bindParams(fn.params, fn.code.defaults, args, env);
+    const code = fn.code;
+    const shape = code.shape;
+    // Функции без параметров и объявлений своя область не нужна: складывать в неё
+    // нечего, а на каждый вызов это был лишний объект.
+    let env = fn.closure;
+    if (shape !== null) {
+      env = new Environment(fn.closure, false, shape);
+      if (code.selfSlot >= 0 && fn.self !== null) env.slots[code.selfSlot] = fn.self;
+      this.bindParams(code, args, env);
+    }
 
     this.depth++;
     try {
-      const sig = fn.code.run(env) as Signal;
+      const sig = code.run(env) as Signal;
       if (sig === RETURN) {
         const value = this.returnValue;
         this.returnValue = null; // не держим значение живым дольше нужного
@@ -859,19 +1121,14 @@ export class Interpreter {
     }
   }
 
-  private bindParams(
-    params: Param[],
-    defaults: Array<ExprFn | null>,
-    args: Value[],
-    env: Environment,
-  ): void {
+  private bindParams(code: CompiledFn, args: Value[], env: Environment): void {
     const n = args.length;
-    for (let i = 0; i < params.length; i++) {
-      const p = params[i]!;
+    const slots = code.paramSlots;
+    const defaults = code.defaults;
+    for (let i = 0; i < slots.length; i++) {
       // Значение по умолчанию вычисляется в области вызова — оно может ссылаться на другие параметры.
       const fallback = defaults[i];
-      const value = i < n ? args[i]! : fallback ? fallback(env) : null;
-      env.define(p.name, value, true);
+      env.slots[slots[i]!] = i < n ? args[i]! : fallback ? fallback(env) : null;
     }
   }
 
