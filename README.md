@@ -1,5 +1,8 @@
 # Sable™
 
+[![CI](https://github.com/BOTIROFF-D/sable/actions/workflows/ci.yml/badge.svg)](https://github.com/BOTIROFF-D/sable/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-8E5407.svg)](LICENSE)
+
 **English** · [Русский](#о-языке)
 
 A general-purpose programming language whose interpreter compiles the AST to
@@ -62,7 +65,9 @@ print("Самая длинная: ${longest.x}, ${longest.y} → ${round(longest
 
 ## Запуск
 
-Требуется Node 22.6+ (TypeScript исполняется нативно, компиляция не нужна).
+Требуется Node 22.18+ или 24+ — с этих версий TypeScript исполняется нативно
+без флагов, поэтому компилировать нечего. Проверено прогоном всего набора
+тестов на 22.18, 24 и 25; на 22.17 и раньше не запустится.
 
 ```bash
 node src/cli.ts examples/01_hello.sable   # выполнить файл
