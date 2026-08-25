@@ -1,2 +1,0 @@
-import "lib/нет_такого.dbgo" as x
-print(x)

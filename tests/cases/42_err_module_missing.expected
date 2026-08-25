@@ -1,5 +1,5 @@
-Ошибка выполнения: не удалось прочитать модуль «lib/нет_такого.dbgo» — искали по пути tests/cases/lib/нет_такого.dbgo
-  --> 42_err_module_missing.dbgo:1:1
+Ошибка выполнения: не удалось прочитать модуль «lib/нет_такого.sable» — искали по пути tests/cases/lib/нет_такого.sable
+  --> 42_err_module_missing.sable:1:1
   |
-1 | import "lib/нет_такого.dbgo" as x
+1 | import "lib/нет_такого.sable" as x
   | ^

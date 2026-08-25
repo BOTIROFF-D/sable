@@ -1,4 +1,4 @@
-// Первая программа на dbgo
+// Первая программа на Sable
 let name = "мир"
 print("Привет, ${name}!")
 
@@ -7,5 +7,5 @@ fn greet(who, greeting = "Привет") {
   return "${greeting}, ${who}!"
 }
 
-print(greet("dbgo"))
+print(greet("Sable"))
 print(greet("Ali", "Salom"))

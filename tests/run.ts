@@ -1,10 +1,10 @@
-// Golden-тесты: для каждого tests/cases/X.dbgo вывод должен совпасть с X.expected.
+// Golden-тесты: для каждого tests/cases/X.sable вывод должен совпасть с X.expected.
 // Запуск:  node tests/run.ts          — проверить
 //          node tests/run.ts --update — перезаписать эталоны (после осознанной правки)
 import { readFileSync, readdirSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DbgoError, forgetSources, formatError, formatErrors, registerSource } from '../src/errors.ts';
+import { SableError, forgetSources, formatError, formatErrors, registerSource } from '../src/errors.ts';
 import { Interpreter } from '../src/interpreter.ts';
 import { tokenize } from '../src/lexer.ts';
 import { parseAll } from '../src/parser.ts';
@@ -28,7 +28,7 @@ function runCase(source: string, file: string, fullPath: string): string {
     if (parsed.errors.length > 0) return out + formatErrors(parsed.errors, source) + '\n';
     interp.run(parsed.program);
   } catch (e) {
-    if (e instanceof DbgoError) out += formatError(e, source) + '\n';
+    if (e instanceof SableError) out += formatError(e, source) + '\n';
     else out += `ВНУТРЕННЯЯ ОШИБКА: ${(e as Error).message}\n`;
   }
   return out;
@@ -53,7 +53,7 @@ if (!existsSync(EXAMPLE_GOLDEN)) mkdirSync(EXAMPLE_GOLDEN, { recursive: true });
 
 type Case = { file: string; dir: string; goldenDir: string };
 const collect = (dir: string, goldenDir: string): Case[] =>
-  readdirSync(dir).filter((f) => f.endsWith('.dbgo')).sort().map((file) => ({ file, dir, goldenDir }));
+  readdirSync(dir).filter((f) => f.endsWith('.sable')).sort().map((file) => ({ file, dir, goldenDir }));
 
 const files = [...collect(CASES, CASES), ...collect(EXAMPLES, EXAMPLE_GOLDEN)]
   .filter((c) => !only || c.file.includes(only));
@@ -63,7 +63,7 @@ const failures: string[] = [];
 
 for (const { file, dir, goldenDir } of files) {
   const source = readFileSync(join(dir, file), 'utf8');
-  const goldenPath = join(goldenDir, file.replace(/\.dbgo$/, '.expected'));
+  const goldenPath = join(goldenDir, file.replace(/\.sable$/, '.expected'));
   forgetSources();
   const actual = runCase(source, file, join(dir, file));
 

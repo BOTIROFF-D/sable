@@ -1,6 +1,6 @@
 // Тесты статической проверки: node tests/checker.ts
 //
-// Каждый кейс — маленькая программа на dbgo и список ожидаемых диагностик:
+// Каждый кейс — маленькая программа на sable и список ожидаемых диагностик:
 // строгость, строка, колонка и кусок сообщения. Пустой список означает
 // «здесь всё в порядке» — это защита от ложных срабатываний, и таких кейсов
 // столько же, сколько ловящих.
@@ -323,7 +323,7 @@ const failures: string[] = [];
 for (const c of CASES) {
   let got: Diagnostic[];
   try {
-    got = check(parse(tokenize(c.source, 'проверка.dbgo'), 'проверка.dbgo'), GLOBALS);
+    got = check(parse(tokenize(c.source, 'проверка.sable'), 'проверка.sable'), GLOBALS);
   } catch (e) {
     failures.push(`${c.name}\n    программа не разобралась: ${(e as Error).message}\n${numbered(c.source)}`);
     process.stdout.write(`  ✗ ${c.name}\n`);

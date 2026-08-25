@@ -5,17 +5,17 @@ import { join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { check } from './checker.ts';
 import { format } from './format.ts';
-import { DbgoError, formatAt, formatError, formatErrors, registerSource, shortPath } from './errors.ts';
+import { SableError, formatAt, formatError, formatErrors, registerSource, shortPath } from './errors.ts';
 import { Interpreter } from './interpreter.ts';
 import { tokenize } from './lexer.ts';
 import { parse, parseAll } from './parser.ts';
 import { repr, type Value } from './values.ts';
 
-export const LANG = 'dbgo';
+export const LANG = 'Sable';
 export const VERSION = '0.2.0';
-export const EXT = '.dbgo';
+export const EXT = '.sable';
 
-/** Разбор + выполнение одного исходника. Ошибки уходят наверх как DbgoError. */
+/** Разбор + выполнение одного исходника. Ошибки уходят наверх как SableError. */
 export function runSource(source: string, file: string, interp: Interpreter): Value {
   const program = parse(tokenize(source, file), file);
   return interp.runInteractive(program);
@@ -58,7 +58,7 @@ function checkFile(path: string): number {
     }
     program = parsed.program;
   } catch (e) {
-    if (e instanceof DbgoError) {
+    if (e instanceof SableError) {
       process.stderr.write(formatError(e, source) + '\n');
       return 65;
     }
@@ -113,7 +113,7 @@ function formatFiles(args: string[]): number {
     try {
       result = format(source, file);
     } catch (e) {
-      if (e instanceof DbgoError) {
+      if (e instanceof SableError) {
         process.stderr.write(formatError(e, source) + '\n');
         process.stderr.write(`${file}: не отформатирован — сначала почините синтаксис\n`);
         return 65;
@@ -169,7 +169,7 @@ function runFile(path: string): number {
     program = parsed.program;
   } catch (e) {
     // Лексер до разбора не доходит: сломанный символ или незакрытая строка — одна ошибка.
-    if (e instanceof DbgoError) {
+    if (e instanceof SableError) {
       process.stderr.write(formatError(e, source) + '\n');
       return 65;
     }
@@ -181,7 +181,7 @@ function runFile(path: string): number {
     interp.run(program);
     return 0;
   } catch (e) {
-    if (e instanceof DbgoError) {
+    if (e instanceof SableError) {
       process.stderr.write(formatError(e, source) + '\n');
       return 70;
     }
@@ -195,13 +195,13 @@ function isIncomplete(source: string): boolean {
     parse(tokenize(source, '<repl>'), '<repl>');
     return false;
   } catch (e) {
-    if (!(e instanceof DbgoError)) return false;
+    if (!(e instanceof SableError)) return false;
     const atEnd = /конец файла|не закрыт|оборвалось/.test(e.message);
     return atEnd;
   }
 }
 
-const HISTORY_FILE = join(homedir(), '.dbgo_history');
+const HISTORY_FILE = join(homedir(), '.sable_history');
 const HISTORY_LIMIT = 500;
 
 /**
@@ -280,7 +280,7 @@ async function repl(): Promise<number> {
       if (value !== null && value !== undefined) process.stdout.write(repr(value) + '\n');
       if (showTime) process.stdout.write(`  за ${(performance.now() - started).toFixed(3)} мс\n`);
     } catch (e) {
-      if (e instanceof DbgoError) process.stdout.write(formatError(e, code) + '\n');
+      if (e instanceof SableError) process.stdout.write(formatError(e, code) + '\n');
       else throw e;
     }
   };
@@ -348,21 +348,21 @@ const HELP_REPL = `
 
   Tab                  дополнить имя
   ↑ / ↓                история; она сохраняется между запусками
-                       в ~/.dbgo_history
+                       в ~/.sable_history
 
   Незавершённая строка продолжается автоматически — например, после «{».
 `;
 
 const HELP_ROWS: Array<[string, string]> = [
-  [`dbgo <файл${EXT}>`, 'выполнить файл'],
-  ['dbgo', 'интерактивный режим (REPL)'],
-  ['dbgo -e "<код>"', 'выполнить строку кода'],
-  [`dbgo --check <файл${EXT}>`, 'проверить, не запуская'],
-  [`dbgo fmt <файл${EXT}>`, 'привести к каноническому виду'],
-  ['dbgo fmt -w <файлы>', 'то же, записав на место'],
-  ['dbgo fmt -c <файлы>', 'только проверить оформление (для сборки)'],
-  ['dbgo --version', 'версия'],
-  ['dbgo --help', 'эта справка'],
+  [`sable <файл${EXT}>`, 'выполнить файл'],
+  ['sable', 'интерактивный режим (REPL)'],
+  ['sable -e "<код>"', 'выполнить строку кода'],
+  [`sable --check <файл${EXT}>`, 'проверить, не запуская'],
+  [`sable fmt <файл${EXT}>`, 'привести к каноническому виду'],
+  ['sable fmt -w <файлы>', 'то же, записав на место'],
+  ['sable fmt -c <файлы>', 'только проверить оформление (для сборки)'],
+  ['sable --version', 'версия'],
+  ['sable --help', 'эта справка'],
 ];
 
 // Ширина первой колонки считается по самой длинной строке — тогда справка
@@ -400,7 +400,7 @@ async function main(): Promise<number> {
       runSource(source, '<-e>', interp);
       return 0;
     } catch (e) {
-      if (e instanceof DbgoError) { process.stderr.write(formatError(e, source) + '\n'); return 70; }
+      if (e instanceof SableError) { process.stderr.write(formatError(e, source) + '\n'); return 70; }
       throw e;
     }
   }

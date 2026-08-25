@@ -1,9 +1,9 @@
-// Единая система ошибок dbgo: и лексер, и парсер, и рантайм говорят одинаково.
+// Единая система ошибок sable: и лексер, и парсер, и рантайм говорят одинаково.
 // Каждая ошибка знает точку в исходнике и умеет напечатать себя со стрелкой.
 
 export type Span = { line: number; col: number; file: string };
 
-export class DbgoError extends Error {
+export class SableError extends Error {
   stage: 'lex' | 'parse' | 'runtime';
   span: Span | null;
   /** Стек вызовов на момент ошибки — только для runtime. */
@@ -19,7 +19,7 @@ export class DbgoError extends Error {
     payload: unknown = undefined,
   ) {
     super(message);
-    this.name = 'DbgoError';
+    this.name = 'SableError';
     this.stage = stage;
     this.span = span;
     this.trace = trace;
@@ -27,9 +27,9 @@ export class DbgoError extends Error {
   }
 }
 
-export const lexError = (m: string, s: Span) => new DbgoError('lex', m, s);
-export const parseError = (m: string, s: Span) => new DbgoError('parse', m, s);
-export const runtimeError = (m: string, s: Span | null = null) => new DbgoError('runtime', m, s);
+export const lexError = (m: string, s: Span) => new SableError('lex', m, s);
+export const parseError = (m: string, s: Span) => new SableError('parse', m, s);
+export const runtimeError = (m: string, s: Span | null = null) => new SableError('runtime', m, s);
 
 /**
  * Исходники всех файлов, которые успели попасть в программу.
@@ -90,7 +90,7 @@ export function formatAt(title: string, message: string, span: Span | null, sour
  * как печаталась бы поодиночке, — чтобы вывод не зависел от того, сколько их нашлось.
  * Показывается не больше `limit`: дальше идут ошибки-последствия, а не причины.
  */
-export function formatErrors(errors: DbgoError[], source: string, limit = 10): string {
+export function formatErrors(errors: SableError[], source: string, limit = 10): string {
   const shown = errors.slice(0, limit);
   const parts = shown.map((e) => formatError(e, source));
   if (errors.length > shown.length) {
@@ -104,7 +104,7 @@ export function formatErrors(errors: DbgoError[], source: string, limit = 10): s
 /**
  * Отчёт об ошибке для терминала: то же плюс стек вызовов.
  */
-export function formatError(err: DbgoError, source: string): string {
+export function formatError(err: SableError, source: string): string {
   const out = [formatAt(STAGE_TITLE[err.stage] ?? 'Ошибка', err.message, err.span, source)];
   // Повторы одного кадра (рекурсия) схлопываются — иначе трейс превращается в стену.
   for (let i = 0; i < err.trace.length; ) {

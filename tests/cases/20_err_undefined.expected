@@ -1,5 +1,5 @@
 Ошибка выполнения: имя «countr» не определено — возможно, имелось в виду «counter»
-  --> 20_err_undefined.dbgo:2:7
+  --> 20_err_undefined.sable:2:7
   |
 2 | print(countr)
   |       ^

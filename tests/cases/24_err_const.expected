@@ -1,5 +1,5 @@
 Ошибка выполнения: «limit» объявлено через const — менять нельзя
-  --> 24_err_const.dbgo:2:7
+  --> 24_err_const.sable:2:7
   |
 2 | limit = 20
   |       ^

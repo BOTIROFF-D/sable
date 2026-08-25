@@ -1,7 +1,7 @@
 {
-  "name": "dbgo",
-  "displayName": "dbgo",
-  "description": "Подсветка синтаксиса для языка dbgo",
+  "name": "sable",
+  "displayName": "Sable",
+  "description": "Подсветка синтаксиса для языка Sable",
   "version": "0.2.0",
   "publisher": "botiroff",
   "license": "MIT",
@@ -10,17 +10,17 @@
   "contributes": {
     "languages": [
       {
-        "id": "dbgo",
-        "aliases": ["dbgo"],
-        "extensions": [".dbgo"],
+        "id": "sable",
+        "aliases": ["Sable", "sable"],
+        "extensions": [".sable"],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
-        "language": "dbgo",
-        "scopeName": "source.dbgo",
-        "path": "./syntaxes/dbgo.tmLanguage.json"
+        "language": "sable",
+        "scopeName": "source.sable",
+        "path": "./syntaxes/sable.tmLanguage.json"
       }
     ]
   }

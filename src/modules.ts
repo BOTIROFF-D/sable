@@ -4,7 +4,7 @@ import { registerSource, runtimeError, shortPath, type Span } from './errors.ts'
 import type { Interpreter } from './interpreter.ts';
 import { tokenize } from './lexer.ts';
 import { parse } from './parser.ts';
-import { DbgoModule } from './values.ts';
+import { SableModule } from './values.ts';
 
 /**
  * Загрузчик модулей. Каждый файл выполняется ровно один раз: повторный import
@@ -15,12 +15,12 @@ export class ModuleLoader {
   /** Файлы, которые прямо сейчас выполняются — по ним ловится циклический import. */
   private loading: string[] = [];
 
-  load(interp: Interpreter, rawPath: string, fromFile: string, alias: string, span: Span): DbgoModule {
+  load(interp: Interpreter, rawPath: string, fromFile: string, alias: string, span: Span): SableModule {
     const full = isAbsolute(rawPath) ? rawPath : resolve(dirname(fromFile), rawPath);
     const shown = shortPath(full, relative(process.cwd(), full));
 
     const cached = this.cache.get(full);
-    if (cached) return new DbgoModule(alias, shown, cached as Map<string, never>);
+    if (cached) return new SableModule(alias, shown, cached as Map<string, never>);
 
     const cycleAt = this.loading.indexOf(full);
     if (cycleAt !== -1) {
@@ -46,7 +46,7 @@ export class ModuleLoader {
       const program = parse(tokenize(source, shown), shown);
       const exports = interp.runModule(program, full);
       this.cache.set(full, exports as Map<string, unknown>);
-      return new DbgoModule(alias, shown, exports);
+      return new SableModule(alias, shown, exports);
     } finally {
       this.loading.pop();
     }

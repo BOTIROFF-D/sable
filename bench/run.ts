@@ -1,18 +1,18 @@
-// Стенд замеров скорости интерпретатора dbgo.
+// Стенд замеров скорости интерпретатора sable.
 //
 //   node bench/run.ts                — прогнать всё и сравнить с bench/baseline.json
 //   node bench/run.ts --save         — прогнать и записать результат как новый базовый замер
 //   node bench/run.ts --only=fib     — только замеры, чьё имя содержит «fib»
 //   node bench/run.ts --runs=7       — сколько раз повторить каждый замер (по умолчанию 5)
 //
-// Каждая программа bench/*.dbgo объявляет в шапке число логических операций
+// Каждая программа bench/*.sable объявляет в шапке число логических операций
 // строкой «// ops: N» — из него считаются операции в секунду. Число условно
 // (что считать операцией — вопрос вкуса), но оно постоянно, поэтому сравнение
 // «было → стало» по нему честное.
 import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DbgoError, formatError, forgetSources, registerSource } from '../src/errors.ts';
+import { SableError, formatError, forgetSources, registerSource } from '../src/errors.ts';
 import { Interpreter } from '../src/interpreter.ts';
 import { tokenize } from '../src/lexer.ts';
 import { parse } from '../src/parser.ts';
@@ -48,7 +48,7 @@ function once(program: ReturnType<typeof parse>, fullPath: string): number {
 function measure(file: string): Result {
   const fullPath = join(HERE, file);
   const source = readFileSync(fullPath, 'utf8');
-  const name = file.replace(/\.dbgo$/, '');
+  const name = file.replace(/\.sable$/, '');
   forgetSources();
   registerSource(file, source);
   // Разбор вне измерения: меряем интерпретатор, а не лексер с парсером.
@@ -141,7 +141,7 @@ function report(results: Result[], base: Baseline | null): void {
  */
 function checkStackMargin(): boolean {
   // Функция намеренно тяжёлая: чем больше в теле вложенных выражений, структур
-  // и литералов, тем больше кадров JS уходит на один вызов dbgo. Тривиальная
+  // и литералов, тем больше кадров JS уходит на один вызов sable. Тривиальная
   // рекурсия проверяла бы самый лёгкий случай и пропустила бы регрессию.
   const source = [
     'struct Узел { знач, дальше = nil }',
@@ -161,7 +161,7 @@ function checkStackMargin(): boolean {
   try {
     new Interpreter({ write: () => {} }, file).run(parse(tokenize(source, file), file));
   } catch (e) {
-    message = e instanceof DbgoError ? e.message : String(e);
+    message = e instanceof SableError ? e.message : String(e);
   }
   const ok = message.startsWith('слишком глубокая рекурсия');
   process.stdout.write(
@@ -176,12 +176,12 @@ function checkStackMargin(): boolean {
 // ---- запуск ---------------------------------------------------------------
 
 const files = readdirSync(HERE)
-  .filter((f) => f.endsWith('.dbgo'))
+  .filter((f) => f.endsWith('.sable'))
   .sort()
   .filter((f) => !only || f.includes(only));
 
 if (files.length === 0) {
-  process.stdout.write('нечего мерить: bench/*.dbgo не найдены\n');
+  process.stdout.write('нечего мерить: bench/*.sable не найдены\n');
   process.exit(1);
 }
 
@@ -196,7 +196,7 @@ for (const file of files) {
     results.push(measure(file));
   } catch (e) {
     process.stderr.write(`\n${file}: замер не выполнился\n`);
-    if (e instanceof DbgoError) process.stderr.write(formatError(e, readFileSync(join(HERE, file), 'utf8')) + '\n');
+    if (e instanceof SableError) process.stderr.write(formatError(e, readFileSync(join(HERE, file), 'utf8')) + '\n');
     else throw e;
     process.exitCode = 1;
   }

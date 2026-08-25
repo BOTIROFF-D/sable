@@ -12,7 +12,7 @@ import { Interpreter } from '../src/interpreter.ts';
 import { KEYWORDS } from '../src/token.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const GRAMMAR = join(ROOT, 'editors', 'vscode', 'syntaxes', 'dbgo.tmLanguage.json');
+const GRAMMAR = join(ROOT, 'editors', 'vscode', 'syntaxes', 'sable.tmLanguage.json');
 
 type Rule = { match?: string; begin?: string; end?: string; name?: string; patterns?: Rule[] };
 type Grammar = { scopeName: string; patterns: Rule[]; repository: Record<string, Rule & { patterns?: Rule[] }> };

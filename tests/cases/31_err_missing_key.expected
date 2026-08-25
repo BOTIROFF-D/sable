@@ -1,5 +1,5 @@
 Ошибка выполнения: в словаре нет ключа "port"
-  --> 31_err_missing_key.dbgo:2:10
+  --> 31_err_missing_key.sable:2:10
   |
 2 | print(cfg["port"])
   |          ^

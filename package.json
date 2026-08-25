@@ -1,13 +1,13 @@
 {
-  "name": "dbgo",
+  "name": "sable",
   "version": "0.2.0",
-  "description": "dbgo — учебно-боевой язык программирования: лексер, парсер, tree-walking интерпретатор",
+  "description": "Sable — язык программирования: лексер, парсер, компиляция AST в замыкания",
   "type": "module",
   "bin": {
-    "dbgo": "./bin/dbgo.mjs"
+    "sable": "./bin/sable.mjs"
   },
   "scripts": {
-    "dbgo": "node src/cli.ts",
+    "sable": "node src/cli.ts",
     "repl": "node src/cli.ts",
     "test": "node tests/run.ts && node tests/checker.ts && node tests/docs.ts && node tests/grammar.ts && node tests/format.ts",
     "check": "node src/cli.ts --check",

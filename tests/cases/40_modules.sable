@@ -1,6 +1,6 @@
-import "lib/greet.dbgo" as g
-import "lib/counter.dbgo" as c
-import "lib/reexport.dbgo" as re
+import "lib/greet.sable" as g
+import "lib/counter.sable" as c
+import "lib/reexport.sable" as re
 
 print(g.привет("мир"))
 print(g.удвоить(21), g.ЯЗЫК)

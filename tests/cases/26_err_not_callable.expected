@@ -1,5 +1,5 @@
 Ошибка выполнения: number нельзя вызвать как функцию
-  --> 26_err_not_callable.dbgo:2:2
+  --> 26_err_not_callable.sable:2:2
   |
 2 | x()
   |  ^

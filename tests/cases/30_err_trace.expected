@@ -1,8 +1,8 @@
 Ошибка выполнения: у значения типа number нет поля или метода «нет_такого_поля»
-  --> 30_err_trace.dbgo:1:24
+  --> 30_err_trace.sable:1:24
   |
 1 | fn level3(x) { return x.нет_такого_поля }
   |                        ^
-  в level3 (30_err_trace.dbgo:2:29)
-  в level2 (30_err_trace.dbgo:3:29)
-  в level1 (30_err_trace.dbgo:4:13)
+  в level3 (30_err_trace.sable:2:29)
+  в level2 (30_err_trace.sable:3:29)
+  в level1 (30_err_trace.sable:4:13)

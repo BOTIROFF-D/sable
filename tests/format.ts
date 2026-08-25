@@ -3,7 +3,7 @@
 // Три уровня проверки, от самого важного к частному:
 //   1. смысл — программа после форматирования разбирается в то же дерево
 //      и печатает то же самое; ни один комментарий не потерян;
-//   2. идемпотентность — format(format(x)) === format(x) на всех .dbgo репозитория;
+//   2. идемпотентность — format(format(x)) === format(x) на всех .sable репозитория;
 //   3. правила — набор «кривой вход → канонический выход», по кейсу на правило.
 //
 // Ненулевой код выхода при любом расхождении.
@@ -11,7 +11,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Program } from '../src/ast.ts';
-import { DbgoError, forgetSources, formatError, formatErrors, registerSource } from '../src/errors.ts';
+import { SableError, forgetSources, formatError, formatErrors, registerSource } from '../src/errors.ts';
 import { format, sourceComments } from '../src/format.ts';
 import { Interpreter } from '../src/interpreter.ts';
 import { tokenize } from '../src/lexer.ts';
@@ -68,7 +68,7 @@ function run(source: string, file: string, fullPath: string): string {
     if (parsed.errors.length > 0) return out + formatErrors(parsed.errors, source) + '\n';
     interp.run(parsed.program);
   } catch (e) {
-    if (e instanceof DbgoError) out += formatError(e, source) + '\n';
+    if (e instanceof SableError) out += formatError(e, source) + '\n';
     else out += `ВНУТРЕННЯЯ ОШИБКА: ${(e as Error).message}\n`;
   }
   return out;
@@ -91,7 +91,7 @@ function withoutPositions(text: string): string {
 
 type Sample = { file: string; dir: string };
 const collect = (dir: string): Sample[] =>
-  readdirSync(dir).filter((f) => f.endsWith('.dbgo')).sort().map((file) => ({ file, dir }));
+  readdirSync(dir).filter((f) => f.endsWith('.sable')).sort().map((file) => ({ file, dir }));
 
 for (const { file, dir } of [...collect(CASES), ...collect(EXAMPLES)]) {
   const full = join(dir, file);
@@ -103,7 +103,7 @@ for (const { file, dir } of [...collect(CASES), ...collect(EXAMPLES)]) {
   if (broken) {
     // Сломанный код форматтер обязан отвергнуть, а не чинить на свой вкус.
     let threw = false;
-    try { format(source, file); } catch (e) { threw = e instanceof DbgoError; }
+    try { format(source, file); } catch (e) { threw = e instanceof SableError; }
     ok(`${file}: ошибка разбора летит наружу`, threw);
     continue;
   }
@@ -281,7 +281,7 @@ const CASE_LIST: Case[] = [
 for (const c of CASE_LIST) {
   let actual: string;
   try {
-    actual = format(c.input, 'случай.dbgo');
+    actual = format(c.input, 'случай.sable');
   } catch (e) {
     ok(`правило: ${c.name}`, false, `    ${(e as Error).message}`);
     continue;
@@ -289,7 +289,7 @@ for (const c of CASE_LIST) {
   eq(`правило: ${c.name}`, actual, c.expect);
   // Каждое правило заодно проверяется на устойчивость.
   try {
-    eq(`правило: ${c.name} (идемпотентность)`, format(actual, 'случай.dbgo'), actual);
+    eq(`правило: ${c.name} (идемпотентность)`, format(actual, 'случай.sable'), actual);
   } catch (e) {
     ok(`правило: ${c.name} (идемпотентность)`, false, `    ${(e as Error).message}`);
   }
@@ -309,7 +309,7 @@ const HARD: string[] = [
   'for i in 0..3 { fns.push(fn() -> i) }\nwhile x < 10 { x += 1; if x == 5 { break } else { continue } }\n',
   'try { error({код: 404}) } catch { print("нет") }\n',
   'struct S { }\nstruct T { a }\nstruct U { fn m() { return 1 } }\n',
-  'import "lib/math.dbgo" as math\nprint(math.pi)\n',
+  'import "lib/math.sable" as math\nprint(math.pi)\n',
   'print(`строка\nв две`, "вставка ${ a + b } тут", \'третья\')\n',
   'let m = {"true": 1, true: 2, "if": 3, "1": 4, 1: 5}\n',
   'let nested = [[1, [2, [3, [4]]]], {a: {b: {c: [5]}}}]\n',
@@ -323,17 +323,17 @@ for (let i = 0; i < HARD.length; i++) {
   const name = `трудный случай ${i + 1}`;
   let once: string;
   try {
-    once = format(source, 'трудный.dbgo');
+    once = format(source, 'трудный.sable');
   } catch (e) {
     ok(name, false, `    ${(e as Error).message}`);
     continue;
   }
   try {
-    eq(`${name}: идемпотентность`, format(once, 'трудный.dbgo'), once);
+    eq(`${name}: идемпотентность`, format(once, 'трудный.sable'), once);
     eq(
       `${name}: дерево не изменилось`,
-      astKey(parse(tokenize(once, 'трудный.dbgo'), 'трудный.dbgo')),
-      astKey(parse(tokenize(source, 'трудный.dbgo'), 'трудный.dbgo')),
+      astKey(parse(tokenize(once, 'трудный.sable'), 'трудный.sable')),
+      astKey(parse(tokenize(source, 'трудный.sable'), 'трудный.sable')),
     );
     eq(
       `${name}: комментарии на месте`,

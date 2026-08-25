@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// tests/fuzz.ts — генератор случайных программ на dbgo и охотник за сбоями.
+// tests/fuzz.ts — генератор случайных программ на sable и охотник за сбоями.
 //
 // Зачем: golden-тесты проверяют то, о чём мы уже подумали. Фаззер ищет то,
 // о чём не подумал никто: он строит СИНТАКСИЧЕСКИ КОРРЕКТНЫЕ программы
@@ -7,7 +7,7 @@
 // наружу что-то, чего пользователь видеть не должен.
 //
 // Что считается дефектом (см. classify):
-//   1. сбой            — процесс упал не по-dbgo: сигнал, чужой код возврата, OOM;
+//   1. сбой            — процесс упал не по-sable: сигнал, чужой код возврата, OOM;
 //   2. зависание       — не уложился в таймаут либо льёт бесконечный вывод;
 //                        единственный класс, который нужно разбирать глазами:
 //                        случайная программа имеет право быть долгой сама по себе,
@@ -37,11 +37,10 @@
 import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CLI = join(HERE, '..', 'src', 'cli.ts');
 const FINDINGS = join(HERE, 'fuzz-findings');
 
 // ---- разбор аргументов -----------------------------------------------------
@@ -50,6 +49,19 @@ const argOf = (name: string, def: number): number => {
   const raw = process.argv.find((a) => a.startsWith(`--${name}=`));
   return raw === undefined ? def : Number(raw.slice(name.length + 3));
 };
+
+const argStr = (name: string, def: string): string => {
+  const raw = process.argv.find((a) => a.startsWith(`--${name}=`));
+  return raw === undefined ? def : raw.slice(name.length + 3);
+};
+
+/**
+ * Где лежит язык, который проверяем. По умолчанию — этот же репозиторий,
+ * но «--root=/путь/к/копии» позволяет охотиться на заведомо рабочем срезе,
+ * пока в рабочей папке идёт переработка интерпретатора.
+ */
+export const ROOT = argStr('root', join(HERE, '..'));
+const CLI = join(ROOT, 'src', 'cli.ts');
 
 const SEED = argOf('seed', (Math.random() * 0xffffffff) >>> 0);
 const COUNT = argOf('count', 300);
@@ -76,7 +88,7 @@ function makeRandom(seed: number): () => number {
   };
 }
 
-class Rnd {
+export class Rnd {
   next: () => number;
 
   constructor(seed: number) {
@@ -128,7 +140,7 @@ const STR_LITERALS = [
 // Многострочный литерал в пул намеренно не входит: сокращатель работает по
 // строкам, а строка исходника, оборванная посреди `…`, ломает счёт скобок.
 
-class Gen {
+export class Gen {
   r: Rnd;
   /** Все видимые сейчас имена; при выходе из блока хвост отрезается. */
   vars: VarInfo[] = [];
@@ -670,7 +682,7 @@ class Gen {
 }
 
 /** Целая программа: структуры, функции, инструкции, отложенные объявления. */
-function generate(seed: number): string {
+export function generate(seed: number): string {
   const g = new Gen(new Rnd(seed));
   const out: string[] = [];
 
@@ -769,13 +781,13 @@ type Finding = {
 };
 
 /** Следы внутренностей JS: пользователь такого видеть не должен никогда. */
-const JS_MARKERS = [
+export const JS_MARKERS = [
   'Maximum call stack', 'RangeError', 'TypeError', 'ReferenceError', 'SyntaxError',
   'at Parser.', 'at Interpreter.', 'at Lexer.', 'node:internal', 'heap out of memory',
   'ВНУТРЕННЯЯ ОШИБКА', 'Invalid string length',
 ];
 /** Следы «дырявых» значений в выводе. */
-const VALUE_MARKERS = ['undefined', '[object Object]', 'NaN', '"unknown"', 'тип unknown'];
+export const VALUE_MARKERS = ['undefined', '[object Object]', 'NaN', '"unknown"', 'тип unknown'];
 /** Сообщения, за которые отвечает статическая проверка. */
 const CHECKER_OWNED = /не определено|уже объявлено|через const — менять нельзя|вне цикла|вне функции|ожидает .* аргумент/;
 
@@ -957,7 +969,7 @@ async function shrink(source: string, want: string, judge: Judge, budget: number
 
 // ---- главный цикл ----------------------------------------------------------
 
-const TMP = mkdtempSync(join(tmpdir(), 'dbgo-fuzz-'));
+const TMP = mkdtempSync(join(tmpdir(), 'sable-fuzz-'));
 let tmpCounter = 0;
 
 type Verdict = { sig: string | null; runOut: string; checkOut: string };
@@ -971,7 +983,7 @@ async function judgeSource(source: string, timeout = TIMEOUT): Promise<Verdict> 
   const hit = judged.get(key);
   if (hit) return hit;
 
-  const file = join(TMP, `f${tmpCounter++ % 64}.dbgo`);
+  const file = join(TMP, `f${tmpCounter++ % 64}.sable`);
   writeFileSync(file, source, 'utf8');
   const runRes = await run([file], timeout);
   // Предварительный вердикт по одному прогону: если он уже что-то нашёл и это
@@ -997,7 +1009,7 @@ async function main(): Promise<number> {
   }
 
   process.stdout.write(
-    `dbgo fuzz — зерно ${SEED}, программ ${COUNT}, таймаут ${TIMEOUT} мс, потоков ${JOBS}\n\n`,
+    `sable fuzz — зерно ${SEED}, программ ${COUNT}, таймаут ${TIMEOUT} мс, потоков ${JOBS}\n\n`,
   );
 
   const seeds = Array.from({ length: COUNT }, (_, i) => (SEED + i * 2654435761) >>> 0);
@@ -1062,12 +1074,12 @@ async function main(): Promise<number> {
 
     // Префикс «fuzz_» отделяет свежий улов от разобранных вручную примеров,
     // которые лежат в той же папке под своими именами.
-    const name = `fuzz_${String(index).padStart(2, '0')}_${finding.category}.dbgo`;
+    const name = `fuzz_${String(index).padStart(2, '0')}_${finding.category}.sable`;
     const header = [
       `// Найдено фаззером: node tests/fuzz.ts --seed=${finding.seed}`,
       `// Класс: ${finding.category}`,
       `// Признак: ${finding.detail}`,
-      '// Ожидалось: результат или ошибка dbgo со стрелкой; получено — см. ниже.',
+      '// Ожидалось: результат или ошибка sable со стрелкой; получено — см. ниже.',
       '// Фактический вывод:',
       ...after.runOut.split('\n').slice(0, 12).map((l) => `//   ${l}`),
       '',
@@ -1081,4 +1093,8 @@ async function main(): Promise<number> {
   return 1;
 }
 
-main().then((code) => { process.exitCode = code; });
+// Файл служит и самостоятельным охотником, и складом деталей для tests/fuzz-tools.ts.
+// Поэтому главный цикл запускается только при прямом вызове, а не при импорте.
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().then((code) => { process.exitCode = code; });
+}

@@ -29,7 +29,7 @@ function extract(markdown: string, doc: string): Snippet[] {
   const out: Snippet[] = [];
 
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i] !== '```dbgo') continue;
+    if (lines[i] !== '```sable') continue;
     const codeStart = i + 1;
     let j = codeStart;
     while (j < lines.length && lines[j] !== '```') j++;
@@ -49,13 +49,13 @@ function extract(markdown: string, doc: string): Snippet[] {
   return out;
 }
 
-/** Запуск во временной папке: файл называется demo.dbgo, как в тексте учебника. */
+/** Запуск во временной папке: файл называется demo.sable, как в тексте учебника. */
 function run(code: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'dbgo-tutorial-'));
-  const file = join(dir, 'demo.dbgo');
+  const dir = mkdtempSync(join(tmpdir(), 'sable-tutorial-'));
+  const file = join(dir, 'demo.sable');
   writeFileSync(file, code.endsWith('\n') ? code : code + '\n', 'utf8');
   try {
-    return execFileSync('node', [CLI, 'demo.dbgo'], {
+    return execFileSync('node', [CLI, 'demo.sable'], {
       cwd: dir,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],

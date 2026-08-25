@@ -1,2 +1,0 @@
-import "lib/greet.dbgo" as g
-print(g.удвоит(2))

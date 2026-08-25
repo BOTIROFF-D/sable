@@ -1,7 +1,7 @@
 70
 Ошибка выполнения: недостаточно средств: нужно 500, есть 100
-  --> 32_err_custom.dbgo:2:30
+  --> 32_err_custom.sable:2:30
   |
 2 |   if amount > balance { error("недостаточно средств: нужно ${amount}, есть ${balance}") }
   |                              ^
-  в withdraw (32_err_custom.dbgo:6:15)
+  в withdraw (32_err_custom.sable:6:15)

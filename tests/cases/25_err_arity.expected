@@ -1,5 +1,5 @@
 Ошибка выполнения: «greet» ожидает 2 аргумента, а получила 1
-  --> 25_err_arity.dbgo:2:12
+  --> 25_err_arity.sable:2:12
   |
 2 | print(greet("Ali"))
   |            ^

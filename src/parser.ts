@@ -1,5 +1,5 @@
 import type { Expr, Param, Program, Stmt } from './ast.ts';
-import { DbgoError, parseError, type Span } from './errors.ts';
+import { SableError, parseError, type Span } from './errors.ts';
 import { Lexer } from './lexer.ts';
 import type { Token, TokenType } from './token.ts';
 
@@ -28,7 +28,7 @@ export class Parser {
   /** Пока > 0, «{» после выражения читается как блок, а не как словарь. */
   private noMapLiteral = 0;
   /** Накопленные синтаксические ошибки: разбор продолжается после каждой. */
-  private errors: DbgoError[] = [];
+  private errors: SableError[] = [];
   /** Глубина вложенности блоков: import разрешён только на верхнем уровне. */
   private blockDepth = 0;
   /** Глубина вложенности разбора — страховка от срыва стека на «[[[[…]]]]». */
@@ -93,7 +93,7 @@ export class Parser {
    * Разбор с продолжением после ошибки: собирает все синтаксические ошибки за один проход.
    * Чинить файл по одной опечатке за запуск — самая дорогая часть работы с новым языком.
    */
-  parseAll(): { program: Program; errors: DbgoError[] } {
+  parseAll(): { program: Program; errors: SableError[] } {
     const stmts: Stmt[] = [];
     this.skipSeparators();
 
@@ -110,7 +110,7 @@ export class Parser {
       try {
         stmts.push(this.declaration());
       } catch (e) {
-        if (!(e instanceof DbgoError) || e.stage !== 'parse') throw e;
+        if (!(e instanceof SableError) || e.stage !== 'parse') throw e;
         this.report(e);
         this.synchronize(before);
       }
@@ -121,7 +121,7 @@ export class Parser {
   }
 
   /** Одна ошибка на позицию: иначе повторный разбор того же места даёт эхо. */
-  private report(err: DbgoError): void {
+  private report(err: SableError): void {
     const last = this.errors[this.errors.length - 1];
     if (last && last.span && err.span && last.span.line === err.span.line && last.span.col === err.span.col) {
       return;
@@ -179,7 +179,7 @@ export class Parser {
         kw.span,
       );
     }
-    const path = this.expect('STRING', 'путь к файлу в кавычках, например "utils.dbgo"');
+    const path = this.expect('STRING', 'путь к файлу в кавычках, например "utils.sable"');
     if (path.parts) throw parseError('путь к модулю не может содержать вставку ${...}', path.span);
     this.expect('AS', '«as» и имя, под которым подключается модуль');
     const alias = this.expect('IDENT', 'имя, под которым будет доступен модуль');
@@ -713,6 +713,6 @@ export function parse(tokens: Token[], file = '<input>'): Program {
 }
 
 /** Разбор, сообщающий обо всех синтаксических ошибках сразу. */
-export function parseAll(tokens: Token[], file = '<input>'): { program: Program; errors: DbgoError[] } {
+export function parseAll(tokens: Token[], file = '<input>'): { program: Program; errors: SableError[] } {
   return new Parser(tokens, file).parseAll();
 }

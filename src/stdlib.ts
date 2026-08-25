@@ -1,8 +1,8 @@
 import { readFileSync, readSync, writeFileSync } from 'node:fs';
-import { DbgoError, runtimeError, type Span } from './errors.ts';
+import { SableError, runtimeError, type Span } from './errors.ts';
 import type { Interpreter } from './interpreter.ts';
 import {
-  NativeFn, DbgoFunction, DbgoRange, StructDef, StructInstance,
+  NativeFn, SableFunction, SableRange, StructDef, StructInstance,
   asMapKey, equals, repr, toStr, truthy, typeName,
   type MapKey, type Value,
 } from './values.ts';
@@ -82,7 +82,7 @@ export function installGlobals(interp: Interpreter): void {
     interp.builtins.define(name, new NativeFn(name, min, max, impl), false);
   };
   const call = (f: Value, args: Value[], span: Span, who: string): Value => {
-    if (!(f instanceof DbgoFunction || f instanceof NativeFn)) {
+    if (!(f instanceof SableFunction || f instanceof NativeFn)) {
       throw runtimeError(`«${who}» ожидает функцию, а получила ${typeName(f)}`, span);
     }
     return interp.callCallback(f, args, span, who);
@@ -220,12 +220,12 @@ export function installGlobals(interp: Interpreter): void {
   def('assert', 1, 2, (args, span) => {
     if (truthy(arg(args, 0))) return null;
     const msg = args.length > 1 ? toStr(arg(args, 1)) : 'проверка не прошла';
-    throw new DbgoError('runtime', `assert: ${msg}`, span);
+    throw new SableError('runtime', `assert: ${msg}`, span);
   });
 
   def('error', 1, 1, (args, span) => {
     const v = arg(args, 0);
-    throw new DbgoError('runtime', toStr(v), span, [], v);
+    throw new SableError('runtime', toStr(v), span, [], v);
   });
 
   def('read_file', 1, 1, (args, span) => {
@@ -257,7 +257,7 @@ export function installGlobals(interp: Interpreter): void {
     try {
       return fromPlain(JSON.parse(text));
     } catch (e) {
-      if (e instanceof DbgoError) throw e;
+      if (e instanceof SableError) throw e;
       throw runtimeError('строка не является корректным JSON', span);
     }
   });
@@ -364,7 +364,7 @@ function asMap(fn: string, v: Value, span: Span): Map<MapKey, Value> {
 function asSeq(fn: string, v: Value, span: Span): Value[] {
   // Копия, а не сам список: колбэк вправе менять исходный прямо во время обхода.
   if (Array.isArray(v)) return v.slice();
-  if (v instanceof DbgoRange) return v.toList();
+  if (v instanceof SableRange) return v.toList();
   if (typeof v === 'string') return [...v];
   throw runtimeError(`«${fn}» ожидает список, строку или диапазон, а получила ${typeName(v)}`, span);
 }
@@ -373,14 +373,14 @@ function lengthOf(v: Value, span: Span): number {
   if (typeof v === 'string') return [...v].length;
   if (Array.isArray(v)) return v.length;
   if (v instanceof Map) return v.size;
-  if (v instanceof DbgoRange) return v.length;
+  if (v instanceof SableRange) return v.length;
   throw runtimeError(`у значения типа ${typeName(v)} нет длины`, span);
 }
 
 function toPlain(v: Value, span: Span): unknown {
   if (v === null || typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return v;
   if (Array.isArray(v)) return v.map((x) => toPlain(x, span));
-  if (v instanceof DbgoRange) return v.toList().map((x) => toPlain(x, span));
+  if (v instanceof SableRange) return v.toList().map((x) => toPlain(x, span));
   if (v instanceof Map) {
     const o: Record<string, unknown> = {};
     for (const [k, val] of v) o[String(k)] = toPlain(val, span);
@@ -576,7 +576,7 @@ const LIST_METHODS: MethodTable = {
       if (simple) {
         if (seenPrim.has(x)) continue;
         seenPrim.add(x);
-      } else if (Array.isArray(x) || x instanceof Map || x instanceof StructInstance || x instanceof DbgoRange) {
+      } else if (Array.isArray(x) || x instanceof Map || x instanceof StructInstance || x instanceof SableRange) {
         if (seenDeep.some((y) => equals(y, x))) continue;
         seenDeep.push(x);
       }
@@ -619,7 +619,7 @@ const LIST_METHODS: MethodTable = {
   // count(f) считает подходящие под условие, count(значение) — равные значению.
   count: m(1, 1, (l: Value[], a, sp, it) => {
     const what = a[0]!;
-    if (what instanceof DbgoFunction || what instanceof NativeFn) {
+    if (what instanceof SableFunction || what instanceof NativeFn) {
       let n = 0;
       snap(l).forEach((x, i) => { if (truthy(it.callCallback(what, [x, i], sp, 'count'))) n++; });
       return n;
@@ -746,9 +746,9 @@ const MAP_METHODS: MethodTable = {
 };
 
 const RANGE_METHODS: MethodTable = {
-  len: m(0, 0, (r: DbgoRange) => r.length),
-  list: m(0, 0, (r: DbgoRange) => r.toList()),
-  contains: m(1, 1, (r: DbgoRange, a, sp) => {
+  len: m(0, 0, (r: SableRange) => r.length),
+  list: m(0, 0, (r: SableRange) => r.toList()),
+  contains: m(1, 1, (r: SableRange, a, sp) => {
     const n = wantNumber('contains', a, 0, sp);
     return n >= r.start && n < r.end;
   }),
@@ -819,7 +819,7 @@ const TABLES: Array<[(v: Value) => boolean, MethodTable]> = [
   [(v) => typeof v === 'string', STRING_METHODS],
   [(v) => Array.isArray(v), LIST_METHODS],
   [(v) => v instanceof Map, MAP_METHODS],
-  [(v) => v instanceof DbgoRange, RANGE_METHODS],
+  [(v) => v instanceof SableRange, RANGE_METHODS],
 ];
 
 export type MethodEntry = {

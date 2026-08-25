@@ -1,5 +1,5 @@
 Ошибка выполнения: у User нет поля «nmae»
-  --> 35_err_struct_field.dbgo:3:8
+  --> 35_err_struct_field.sable:3:8
   |
 3 | u.nmae = "Vali"
   |        ^

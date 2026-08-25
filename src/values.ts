@@ -15,7 +15,7 @@ export type CompiledFn = {
   defaults: Array<((env: Environment) => Value) | null>;
 };
 
-export class DbgoFunction {
+export class SableFunction {
   name: string | null;
   params: Param[];
   closure: Environment;
@@ -41,8 +41,8 @@ export class DbgoFunction {
     this.required = countRequired(params);
   }
 
-  bind(self: StructInstance): DbgoFunction {
-    return new DbgoFunction(this.name, this.params, this.code, this.closure, self);
+  bind(self: StructInstance): SableFunction {
+    return new SableFunction(this.name, this.params, this.code, this.closure, self);
   }
 }
 
@@ -62,7 +62,7 @@ export class NativeFn {
   }
 }
 
-export class DbgoRange {
+export class SableRange {
   start: number;
   end: number;
 
@@ -85,7 +85,7 @@ export class DbgoRange {
 export class StructDef {
   name: string;
   fields: Param[];
-  methods: Map<string, DbgoFunction>;
+  methods: Map<string, SableFunction>;
   /** Сколько полей обязательны — считается один раз, а не на каждое создание экземпляра. */
   readonly required: number;
 
@@ -95,7 +95,7 @@ export class StructDef {
   constructor(
     name: string,
     fields: Param[],
-    methods: Map<string, DbgoFunction>,
+    methods: Map<string, SableFunction>,
     fieldDefaults: Array<((env: Environment) => Value) | null> = fields.map(() => null),
   ) {
     this.name = name;
@@ -113,7 +113,7 @@ function countRequired(params: Param[]): number {
   return n;
 }
 
-export class DbgoModule {
+export class SableModule {
   /** Имя, под которым модуль подключён — для сообщений об ошибках. */
   alias: string;
   /** Путь к файлу модуля относительно текущей папки. */
@@ -141,7 +141,7 @@ export type Value =
   | number | string | boolean | null
   | Value[]
   | Map<MapKey, Value>
-  | DbgoFunction | NativeFn | DbgoRange | StructDef | StructInstance | DbgoModule;
+  | SableFunction | NativeFn | SableRange | StructDef | StructInstance | SableModule;
 
 // ---- предикаты и имена типов ---------------------------------------------
 
@@ -152,11 +152,11 @@ export function typeName(v: Value): string {
   if (typeof v === 'boolean') return 'bool';
   if (Array.isArray(v)) return 'list';
   if (v instanceof Map) return 'map';
-  if (v instanceof DbgoRange) return 'range';
-  if (v instanceof DbgoFunction || v instanceof NativeFn) return 'fn';
+  if (v instanceof SableRange) return 'range';
+  if (v instanceof SableFunction || v instanceof NativeFn) return 'fn';
   if (v instanceof StructDef) return 'struct';
   if (v instanceof StructInstance) return v.def.name;
-  if (v instanceof DbgoModule) return 'module';
+  if (v instanceof SableModule) return 'module';
   return 'unknown';
 }
 
@@ -164,7 +164,7 @@ export function typeName(v: Value): string {
 export const truthy = (v: Value): boolean => v !== false && v !== null;
 
 export const isCallable = (v: Value): boolean =>
-  v instanceof DbgoFunction || v instanceof NativeFn || v instanceof StructDef;
+  v instanceof SableFunction || v instanceof NativeFn || v instanceof StructDef;
 
 export function equals(a: Value, b: Value): boolean {
   if (a === b) return true;
@@ -185,7 +185,7 @@ export function equals(a: Value, b: Value): boolean {
     }
     return true;
   }
-  if (a instanceof DbgoRange && b instanceof DbgoRange) return a.start === b.start && a.end === b.end;
+  if (a instanceof SableRange && b instanceof SableRange) return a.start === b.start && a.end === b.end;
   if (a instanceof StructInstance && b instanceof StructInstance) {
     if (a.def !== b.def) return false;
     for (const [k, v] of a.fields) {
@@ -281,11 +281,11 @@ export function repr(v: Value, seen: Set<object> = new Set()): string {
     seen.delete(v);
     return `{${body}}`;
   }
-  if (v instanceof DbgoRange) return `${numToStr(v.start)}..${numToStr(v.end)}`;
-  if (v instanceof DbgoFunction) return `<fn ${v.name ?? 'аноним'}>`;
+  if (v instanceof SableRange) return `${numToStr(v.start)}..${numToStr(v.end)}`;
+  if (v instanceof SableFunction) return `<fn ${v.name ?? 'аноним'}>`;
   if (v instanceof NativeFn) return `<встроенная ${v.name}>`;
   if (v instanceof StructDef) return `<struct ${v.name}>`;
-  if (v instanceof DbgoModule) return `<модуль ${v.alias} из ${v.path}>`;
+  if (v instanceof SableModule) return `<модуль ${v.alias} из ${v.path}>`;
   if (v instanceof StructInstance) {
     if (seen.has(v)) return `${v.def.name}{...}`;
     seen.add(v);

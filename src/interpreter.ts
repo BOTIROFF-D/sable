@@ -1,11 +1,11 @@
 import { join } from 'node:path';
 import type { Expr, Param, Program, Stmt } from './ast.ts';
-import { DbgoError, runtimeError, type Span } from './errors.ts';
+import { SableError, runtimeError, type Span } from './errors.ts';
 import { Environment } from './environment.ts';
 import { ModuleLoader } from './modules.ts';
 import { findMethodEntry, getMethod, installGlobals, repeatText, type MethodEntry } from './stdlib.ts';
 import {
-  DbgoModule, NativeFn, DbgoFunction, DbgoRange, StructDef, StructInstance,
+  SableModule, NativeFn, SableFunction, SableRange, StructDef, StructInstance,
   type CompiledFn,
   asMapKey, charAt, charLength, equals, isCallable, repr, toStr, truthy, typeName,
   type MapKey, type Value,
@@ -38,11 +38,11 @@ type StmtFn = (env: Environment) => Signal;
  */
 
 /**
- * Предел глубины вызовов. Стоит заметно ниже реального стека Node (~1100 вызовов dbgo),
+ * Предел глубины вызовов. Стоит заметно ниже реального стека Node (~1100 вызовов sable),
  * чтобы пользователь всегда видел понятное сообщение, а не срыв стека JS.
- * Поднимается через DBGO_MAX_DEPTH вместе с `node --stack-size=...`.
+ * Поднимается через SABLE_MAX_DEPTH вместе с `node --stack-size=...`.
  */
-const MAX_DEPTH = Number(process.env.DBGO_MAX_DEPTH) || 900;
+const MAX_DEPTH = Number(process.env.SABLE_MAX_DEPTH) || 900;
 
 /** Предел длины списка: за ним JS бросает свой RangeError с чужим сообщением. */
 const MAX_LIST = 50_000_000;
@@ -235,7 +235,7 @@ export class Interpreter {
         const code = this.compileFn(stmt.params, stmt.body);
         const { name, params, span } = stmt;
         return (env) => {
-          env.define(name, new DbgoFunction(name, params, code, env), false, span);
+          env.define(name, new SableFunction(name, params, code, env), false, span);
           return NORMAL;
         };
       }
@@ -249,10 +249,10 @@ export class Interpreter {
           code: this.compileFn(m.params, m.body),
         }));
         return (env) => {
-          const table = new Map<string, DbgoFunction>();
+          const table = new Map<string, SableFunction>();
           const def = new StructDef(name, fields, table, fieldDefaults);
           for (const m of methods) {
-            table.set(m.name, new DbgoFunction(`${name}.${m.name}`, m.params, m.code, env));
+            table.set(m.name, new SableFunction(`${name}.${m.name}`, m.params, m.code, env));
           }
           env.define(name, def, false, span);
           return NORMAL;
@@ -286,7 +286,7 @@ export class Interpreter {
 
       // Диапазон перебирается счётчиком: ради `for i in 0..1000000` незачем
       // сначала строить миллион элементов в памяти.
-      if (seq instanceof DbgoRange) {
+      if (seq instanceof SableRange) {
         for (let i = seq.start; i < seq.end; i++) {
           const sig = step(env, i);
           if (sig === BREAK) break;
@@ -320,7 +320,7 @@ export class Interpreter {
       try {
         return body(new Environment(env));
       } catch (e) {
-        if (!(e instanceof DbgoError) || e.stage !== 'runtime') throw e;
+        if (!(e instanceof SableError) || e.stage !== 'runtime') throw e;
         // Кадры вызовов, оборванных ошибкой, снимаем — обработчик выполняется на своём уровне.
         this.depth = depthBefore;
         const caught = new Environment(env);
@@ -338,7 +338,7 @@ export class Interpreter {
    */
   iterate(seq: Value, span: Span): Value[] {
     if (Array.isArray(seq)) return [...seq];
-    if (seq instanceof DbgoRange) return seq.toList();
+    if (seq instanceof SableRange) return seq.toList();
     if (typeof seq === 'string') return [...seq];
     if (seq instanceof Map) return [...seq.keys()] as Value[];
     throw runtimeError(`по значению типа ${typeName(seq)} нельзя пройти циклом for`, span);
@@ -438,7 +438,7 @@ export class Interpreter {
       case 'Fn': {
         const code = this.compileFn(expr.params, expr.body);
         const { name, params } = expr;
-        return (env) => new DbgoFunction(name, params, code, env);
+        return (env) => new SableFunction(name, params, code, env);
       }
 
       case 'Range': {
@@ -507,7 +507,7 @@ export class Interpreter {
     return (env) => this.callValue(callee(env), evalArgs(env), span, shown);
   }
 
-  private makeRange(startValue: Value, endValue: Value, span: Span): DbgoRange {
+  private makeRange(startValue: Value, endValue: Value, span: Span): SableRange {
     const start = this.numberOperand(startValue, 'начало диапазона', span);
     const end = this.numberOperand(endValue, 'конец диапазона', span);
     // За пределом точных целых прибавление единицы перестаёт двигать счётчик:
@@ -522,7 +522,7 @@ export class Interpreter {
         span,
       );
     }
-    return new DbgoRange(start, end);
+    return new SableRange(start, end);
   }
 
   private calleeName(callee: Expr): string {
@@ -563,7 +563,7 @@ export class Interpreter {
           ? value(env)
           : this.binary(op, this.getMember(obj, name, nameSpan), value(env), span);
 
-        if (obj instanceof DbgoModule) {
+        if (obj instanceof SableModule) {
           throw runtimeError(`имена модуля «${obj.alias}» менять нельзя`, span);
         }
         if (obj instanceof StructInstance) {
@@ -736,7 +736,7 @@ export class Interpreter {
       if (held !== undefined) return held;
     }
 
-    if (obj instanceof DbgoModule) {
+    if (obj instanceof SableModule) {
       const exported = obj.exports.get(name);
       if (exported !== undefined) return exported;
       const near = nearest(name, [...obj.exports.keys()]);
@@ -787,7 +787,7 @@ export class Interpreter {
       return held;
     }
 
-    if (obj instanceof DbgoRange) {
+    if (obj instanceof SableRange) {
       const list = obj.toList();
       return list[this.listIndex(list, key, span)]!;
     }
@@ -804,7 +804,7 @@ export class Interpreter {
    * что ему нужно, а строгая проверка арности остаётся для обычных вызовов.
    */
   callCallback(fn: Value, args: Value[], span: Span, who: string): Value {
-    if (fn instanceof DbgoFunction) return this.callValue(fn, args.slice(0, fn.params.length), span, who);
+    if (fn instanceof SableFunction) return this.callValue(fn, args.slice(0, fn.params.length), span, who);
     if (fn instanceof NativeFn) return this.callValue(fn, args.slice(0, Math.min(args.length, fn.maxArgs)), span, who);
     throw runtimeError(`«${who}» ожидает функцию, а получила ${typeName(fn)}`, span);
   }
@@ -821,7 +821,7 @@ export class Interpreter {
 
     if (callee instanceof StructDef) return this.construct(callee, args, span);
 
-    const fn = callee as DbgoFunction;
+    const fn = callee as SableFunction;
     this.checkArity(fn.name ?? name, args.length, fn.required, fn.params.length, span);
 
     if (this.depth >= MAX_DEPTH) {
@@ -850,7 +850,7 @@ export class Interpreter {
       if (sig !== NORMAL) throw escaped(sig, this.signalSpan);
       return null;
     } catch (e) {
-      if (e instanceof DbgoError && e.stage === 'runtime' && e.trace.length < 12) {
+      if (e instanceof SableError && e.stage === 'runtime' && e.trace.length < 12) {
         e.trace.push({ name: fn.name ?? 'анонимная функция', span });
       }
       throw e;
@@ -919,7 +919,7 @@ function escaped(sig: Signal, span: Span | null = null): unknown {
  * Ошибка как значение языка: у неё всегда есть `message`, а `value` хранит то,
  * что передали в error(...) — иначе форма пойманного зависела бы от источника ошибки.
  */
-function describeError(e: DbgoError): Value {
+function describeError(e: SableError): Value {
   const map = new Map<MapKey, Value>();
   map.set('message', e.message);
   map.set('value', (e.payload ?? null) as Value);
@@ -950,7 +950,7 @@ function finite(n: number, op: string, span: Span): number {
  * имени (у словаря данные важнее методов), и ломать их ради скорости нельзя.
  */
 function fastMethodOf(obj: Value, name: string): MethodEntry | null {
-  if (obj instanceof StructInstance || obj instanceof DbgoModule || obj instanceof StructDef) return null;
+  if (obj instanceof StructInstance || obj instanceof SableModule || obj instanceof StructDef) return null;
   if (obj instanceof Map && obj.has(name)) return null;
   return findMethodEntry(obj, name);
 }

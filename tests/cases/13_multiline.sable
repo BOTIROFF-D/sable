@@ -3,7 +3,7 @@ let text = `первая строка
 третья`
 print(text)
 print(text.split("\n").len())
-let name = "dbgo"
+let name = "Sable"
 print(`вставки работают: ${name.upper()}
 и на второй строке ${1 + 2}`)
 print(`кавычки "двойные" и 'одинарные' внутри — без экранирования`)

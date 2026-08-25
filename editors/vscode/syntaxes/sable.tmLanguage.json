@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
-  "name": "dbgo",
-  "scopeName": "source.dbgo",
+  "name": "sable",
+  "scopeName": "source.sable",
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
@@ -17,11 +17,11 @@
     "comments": {
       "patterns": [
         {
-          "name": "comment.line.double-slash.dbgo",
+          "name": "comment.line.double-slash.sable",
           "match": "//.*$"
         },
         {
-          "name": "comment.block.dbgo",
+          "name": "comment.block.sable",
           "begin": "/\\*",
           "end": "\\*/",
           "patterns": [{ "include": "#comments" }]
@@ -29,33 +29,33 @@
       ]
     },
     "escapes": {
-      "name": "constant.character.escape.dbgo",
+      "name": "constant.character.escape.sable",
       "match": "\\\\(u\\{[0-9A-Fa-f]+\\}|[nrt0\\\\\"'`$])"
     },
     "interpolation": {
-      "name": "meta.embedded.line.dbgo",
+      "name": "meta.embedded.line.sable",
       "begin": "\\$\\{",
       "end": "\\}",
-      "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.dbgo" } },
-      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.dbgo" } },
+      "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.sable" } },
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.sable" } },
       "patterns": [{ "include": "$self" }]
     },
     "strings": {
       "patterns": [
         {
-          "name": "string.quoted.double.dbgo",
+          "name": "string.quoted.double.sable",
           "begin": "\"",
           "end": "\"",
           "patterns": [{ "include": "#escapes" }, { "include": "#interpolation" }]
         },
         {
-          "name": "string.quoted.single.dbgo",
+          "name": "string.quoted.single.sable",
           "begin": "'",
           "end": "'",
           "patterns": [{ "include": "#escapes" }, { "include": "#interpolation" }]
         },
         {
-          "name": "string.quoted.other.backtick.dbgo",
+          "name": "string.quoted.other.backtick.sable",
           "begin": "`",
           "end": "`",
           "patterns": [{ "include": "#escapes" }, { "include": "#interpolation" }]
@@ -67,80 +67,80 @@
         {
           "match": "\\b(fn)\\s+([A-Za-z_\\p{Cyrillic}][A-Za-z0-9_\\p{Cyrillic}\\u02BB\\u02BC]*)",
           "captures": {
-            "1": { "name": "storage.type.function.dbgo" },
-            "2": { "name": "entity.name.function.dbgo" }
+            "1": { "name": "storage.type.function.sable" },
+            "2": { "name": "entity.name.function.sable" }
           }
         },
         {
           "match": "\\b(struct)\\s+([A-Za-z_\\p{Cyrillic}][A-Za-z0-9_\\p{Cyrillic}\\u02BB\\u02BC]*)",
           "captures": {
-            "1": { "name": "storage.type.struct.dbgo" },
-            "2": { "name": "entity.name.type.dbgo" }
+            "1": { "name": "storage.type.struct.sable" },
+            "2": { "name": "entity.name.type.sable" }
           }
         },
         {
           "match": "\\b(let|const)\\s+([A-Za-z_\\p{Cyrillic}][A-Za-z0-9_\\p{Cyrillic}\\u02BB\\u02BC]*)",
           "captures": {
-            "1": { "name": "storage.type.dbgo" },
-            "2": { "name": "variable.other.declaration.dbgo" }
+            "1": { "name": "storage.type.sable" },
+            "2": { "name": "variable.other.declaration.sable" }
           }
         },
         {
           "match": "\\b(import)\\s+(?=[\"'`])",
-          "captures": { "1": { "name": "keyword.control.import.dbgo" } }
+          "captures": { "1": { "name": "keyword.control.import.sable" } }
         }
       ]
     },
     "keywords": {
       "patterns": [
         {
-          "name": "keyword.control.dbgo",
+          "name": "keyword.control.sable",
           "match": "\\b(if|else|while|for|in|break|continue|return|try|catch)\\b"
         },
         {
-          "name": "storage.type.dbgo",
+          "name": "storage.type.sable",
           "match": "\\b(let|const|fn|struct)\\b"
         },
         {
-          "name": "keyword.control.import.dbgo",
+          "name": "keyword.control.import.sable",
           "match": "\\b(import|as)\\b"
         },
         {
-          "name": "keyword.operator.logical.dbgo",
+          "name": "keyword.operator.logical.sable",
           "match": "\\b(and|or|not)\\b"
         },
         {
-          "name": "variable.language.self.dbgo",
+          "name": "variable.language.self.sable",
           "match": "\\bself\\b"
         }
       ]
     },
     "constants": {
-      "name": "constant.language.dbgo",
+      "name": "constant.language.sable",
       "match": "\\b(true|false|nil)\\b"
     },
     "numbers": {
       "patterns": [
         {
-          "name": "constant.numeric.hex.dbgo",
+          "name": "constant.numeric.hex.sable",
           "match": "\\b0[xX][0-9A-Fa-f_]+\\b"
         },
         {
-          "name": "constant.numeric.decimal.dbgo",
+          "name": "constant.numeric.decimal.sable",
           "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9]+)?\\b"
         }
       ]
     },
     "builtins": {
-      "name": "support.function.builtin.dbgo",
+      "name": "support.function.builtin.sable",
       "match": "\\b(print|write|input|len|type|str|repr|num|int|bool|keys|values|entries|range|map|filter|reduce|sum|min|max|abs|floor|ceil|round|sqrt|pow|sign|clamp|log|exp|hypot|sin|cos|tan|asin|acos|atan|atan2|pi|random|random_int|now|clock|assert|error|read_file|write_file|to_json|from_json|zip|enumerate|sorted|reversed|from_entries)\\s*(?=\\()"
     },
     "calls": {
       "match": "([A-Za-z_\\p{Cyrillic}][A-Za-z0-9_\\p{Cyrillic}\\u02BB\\u02BC]*)\\s*(?=\\()",
-      "captures": { "1": { "name": "entity.name.function.call.dbgo" } }
+      "captures": { "1": { "name": "entity.name.function.call.sable" } }
     },
     "operators": {
-      "name": "keyword.operator.dbgo",
+      "name": "keyword.operator.sable",
       "match": "(\\+=|-=|\\*=|/=|==|!=|<=|>=|&&|\\|\\||\\?\\?|->|\\.\\.|[-+*/%^<>=!?:])"
     }
   }

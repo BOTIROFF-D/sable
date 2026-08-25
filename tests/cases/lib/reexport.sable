@@ -1,2 +1,2 @@
-import "counter.dbgo" as c
+import "counter.sable" as c
 fn дважды() { c.считать(); return c.считать() }
