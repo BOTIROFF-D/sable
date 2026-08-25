@@ -1,0 +1,56 @@
+# Пять наборов проверок на трёх версиях Node.
+#
+# Матрица начинается с 22.18 не случайно: это первая версия, где TypeScript
+# исполняется нативно без флагов. На 22.17 проект не запускается вовсе, и
+# граница здесь закреплена, а не записана в README со слов автора.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.18.0', '24', '25']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Установить зависимости
+        run: npm ci
+
+      - name: Проверить типы
+        run: npx tsc --noEmit
+
+      - name: Прогнать все наборы
+        run: npm test
+
+  lowest:
+    name: На 22.17 запускаться не должен
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.17.1'
+      # Нижняя граница — такая же часть контракта, как и всё остальное:
+      # если однажды проект заработает и здесь, README придётся править.
+      - name: Убедиться, что без нативного TypeScript не запускается
+        run: |
+          if node src/cli.ts -e 'print(1)' 2>/dev/null; then
+            echo "На 22.17 запустилось — значит, нижняя граница в README устарела."
+            exit 1
+          fi
+          echo "Не запустилось, как и заявлено."
