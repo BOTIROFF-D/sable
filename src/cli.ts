@@ -291,8 +291,18 @@ async function repl(): Promise<number> {
     const trimmed = whole.trim();
 
     if (!buffer && trimmed.startsWith(':')) {
-      const [cmd, ...rest] = trimmed.split(/\s+/);
+      const [cmd] = trimmed.split(/\s+/);
       const arg = trimmed.slice(cmd!.length).trim();
+
+      // Команды без аргументов не гадают, что значит хвост: «:выход и хвост» —
+      // скорее опечатка, чем просьба выйти, и молча выходить из-за неё нельзя.
+      const noArgs = [':выход', ':quit', ':q', ':помощь', ':help', ':очистить', ':имена'];
+      if (noArgs.includes(cmd!) && arg !== '') {
+        process.stdout.write(`  у команды «${cmd}» нет аргументов, а после неё стоит «${arg}»\n`);
+        buffer = '';
+        prompt();
+        continue;
+      }
 
       if (cmd === ':выход' || cmd === ':quit' || cmd === ':q') break;
 
@@ -315,7 +325,6 @@ async function repl(): Promise<number> {
       }
 
       buffer = '';
-      void rest;
       prompt();
       continue;
     }

@@ -736,13 +736,18 @@ function run(args: string[], timeout: number): Promise<RunResult> {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     alive.add(child);
-    let out = '';
+    // Куски копятся байтами и раскодируются один раз в конце: многобайтовый
+    // символ приходит разрезанным по границе куска, и подекадное декодирование
+    // портило бы его — инструмент выдумывал бы дефект на ровном месте.
+    const chunks: Buffer[] = [];
+    let kept = 0;
     let seen = 0;
     let timedOut = false;
     let flood = false;
+    const decode = (): string => Buffer.concat(chunks).toString('utf8');
     const cap = (chunk: Buffer) => {
       seen += chunk.length;
-      if (out.length < 200_000) out += chunk.toString('utf8');
+      if (kept < 200_000) { chunks.push(chunk); kept += chunk.length; }
       // Бесконечный поток вывода душит и потомка (очередь записи), и родителя.
       // Это тот же бесконечный цикл, только с печатью, — обрываем и зовём зависанием.
       if (seen > OUTPUT_LIMIT && !flood) {
@@ -759,12 +764,12 @@ function run(args: string[], timeout: number): Promise<RunResult> {
     child.on('error', () => {
       clearTimeout(timer);
       alive.delete(child);
-      resolve({ code: null, signal: null, out: out + '\nНЕ УДАЛОСЬ ЗАПУСТИТЬ', timedOut, flood });
+      resolve({ code: null, signal: null, out: decode() + '\nНЕ УДАЛОСЬ ЗАПУСТИТЬ', timedOut, flood });
     });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       alive.delete(child);
-      resolve({ code, signal, out, timedOut, flood });
+      resolve({ code, signal, out: decode(), timedOut, flood });
     });
   });
 }
@@ -787,6 +792,18 @@ export const JS_MARKERS = [
   'ВНУТРЕННЯЯ ОШИБКА', 'Invalid string length',
 ];
 /** Следы «дырявых» значений в выводе. */
+/**
+ * Вывод без эха исходника. Сообщение об ошибке печатает строку программы под
+ * стрелкой; если в этой строке стоит литерал «undefined» или «"unknown"»,
+ * поиск маркеров принял бы её за утёкшее значение.
+ */
+export function withoutSourceEcho(text: string): string {
+  return text
+    .split('\n')
+    .filter((l) => !/^\s*\d* \|/.test(l))
+    .join('\n');
+}
+
 export const VALUE_MARKERS = ['undefined', '[object Object]', 'NaN', '"unknown"', 'тип unknown'];
 /** Сообщения, за которые отвечает статическая проверка. */
 const CHECKER_OWNED = /не определено|уже объявлено|через const — менять нельзя|вне цикла|вне функции|ожидает .* аргумент/;
@@ -805,7 +822,7 @@ function classify(runRes: RunResult, checkRes: RunResult): { category: string; d
     }
   }
 
-  const both = runRes.out + '\n' + checkRes.out;
+  const both = withoutSourceEcho(runRes.out + '\n' + checkRes.out);
   for (const mark of JS_MARKERS) {
     if (both.includes(mark)) return { category: 'js-внутренности', detail: `в выводе «${mark}»` };
   }

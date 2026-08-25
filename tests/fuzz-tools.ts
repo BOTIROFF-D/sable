@@ -37,12 +37,12 @@
 
 import { spawn } from 'node:child_process';
 import {
-  chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { Gen, JS_MARKERS, Rnd, ROOT, VALUE_MARKERS, generate } from './fuzz.ts';
+import { Gen, JS_MARKERS, Rnd, ROOT, VALUE_MARKERS, generate, withoutSourceEcho } from './fuzz.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(ROOT, 'src', 'cli.ts');
@@ -111,13 +111,18 @@ function runCli(args: string[], opts: RunOpts = {}): Promise<RunResult> {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     alive.add(child);
-    let out = '';
+    // Куски копятся байтами и раскодируются один раз в конце: многобайтовый
+    // символ приходит разрезанным по границе куска, и подекадное декодирование
+    // портило бы его. Инструмент, который врёт про испытуемого, хуже отсутствующего.
+    const chunks: Buffer[] = [];
+    let kept = 0;
     let seen = 0;
     let timedOut = false;
     let flood = false;
+    const decode = (): string => Buffer.concat(chunks).toString('utf8');
     const cap = (chunk: Buffer): void => {
       seen += chunk.length;
-      if (out.length < 400_000) out += chunk.toString('utf8');
+      if (kept < 400_000) { chunks.push(chunk); kept += chunk.length; }
       if (seen > OUTPUT_LIMIT && !flood) { flood = true; child.kill('SIGKILL'); }
     };
     child.stdout.on('data', cap);
@@ -131,12 +136,12 @@ function runCli(args: string[], opts: RunOpts = {}): Promise<RunResult> {
     child.on('error', () => {
       clearTimeout(timer);
       alive.delete(child);
-      resolve_({ code: null, signal: null, out: out + '\nНЕ УДАЛОСЬ ЗАПУСТИТЬ', timedOut, flood });
+      resolve_({ code: null, signal: null, out: decode() + '\nНЕ УДАЛОСЬ ЗАПУСТИТЬ', timedOut, flood });
     });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
       alive.delete(child);
-      resolve_({ code, signal, out, timedOut, flood });
+      resolve_({ code, signal, out: decode(), timedOut, flood });
     });
   });
 }
@@ -186,18 +191,26 @@ const hasArrow = (text: string): boolean => text.includes('  --> ');
  * То, что не должно вылезать наружу ни в одном режиме.
  * Возвращает описание дефекта или null.
  */
-function baseTrouble(res: RunResult, allow: number[] = [0, 65, 70]): { category: string; detail: string } | null {
+function baseTrouble(res: RunResult, allow: number[] = [0, 65, 70], outputIsSource = false): { category: string; detail: string } | null {
   if (res.flood) return { category: 'зависание', detail: 'бесконечный поток вывода' };
   if (res.timedOut) return { category: 'зависание', detail: 'не уложился в отведённое время' };
   if (res.signal !== null) return { category: 'сбой', detail: `процесс убит сигналом ${res.signal}` };
   if (res.code !== null && !allow.includes(res.code)) {
     return { category: 'сбой', detail: `неожиданный код возврата ${res.code}` };
   }
+  // Эхо исходника из сообщения об ошибке не считается выводом программы:
+  // литерал «undefined» или «"unknown"» в тексте под стрелкой — это код автора,
+  // а не утёкшее наружу значение.
+  const clean = withoutSourceEcho(res.out);
   for (const mark of JS_MARKERS) {
-    if (res.out.includes(mark)) return { category: 'js-внутренности', detail: `в выводе «${mark}»` };
+    if (clean.includes(mark)) return { category: 'js-внутренности', detail: `в выводе «${mark}»` };
   }
-  for (const mark of VALUE_MARKERS) {
-    if (res.out.includes(mark)) return { category: 'дырявое-значение', detail: `в выводе «${mark}»` };
+  // У «fmt» вывод — это сам исходный код: литерал «undefined» или «"unknown"»,
+  // написанный автором программы, там законен и утечкой значения не является.
+  if (!outputIsSource) {
+    for (const mark of VALUE_MARKERS) {
+      if (clean.includes(mark)) return { category: 'дырявое-значение', detail: `в выводе «${mark}»` };
+    }
   }
   return null;
 }
@@ -211,6 +224,9 @@ function withoutPositions(text: string): string {
   return text
     .split('\n')
     .filter((l) => !/^\s*\d* \|/.test(l))
+    // Исходный и отформатированный лежат в разных файлах, поэтому имя файла
+    // обязано отличаться — и в шапке ошибки, и в строках стека вызовов.
+    .map((l) => l.replace(/[^\s()]*\.sable/g, '<файл>'))
     .map((l) => l.replace(/:\d+:\d+/g, ':строка:колонка'))
     .join('\n');
 }
@@ -629,7 +645,7 @@ async function huntFormatter(seed: number): Promise<void> {
 
   // 1. Форматтер обязан принять всё, что принимает интерпретатор.
   const fmt1 = await runCli(['fmt', src], { cwd: dir });
-  const t1 = baseTrouble(fmt1);
+  const t1 = baseTrouble(fmt1, [0, 65, 70], true);
   if (t1) { fail(t1.category, `fmt: ${t1.detail}`, fmt1.out); return; }
   if (fmt1.code !== 0) {
     fail('fmt-отверг-рабочую-программу', firstLine(fmt1.out), fmt1.out);
@@ -640,7 +656,7 @@ async function huntFormatter(seed: number): Promise<void> {
   // 2. Отформатированное обязано снова разбираться и форматироваться в себя же.
   const dst = put(dir, 'после.sable', once);
   const fmt2 = await runCli(['fmt', dst], { cwd: dir });
-  const t2 = baseTrouble(fmt2);
+  const t2 = baseTrouble(fmt2, [0, 65, 70], true);
   if (t2) { fail(t2.category, `fmt повторно: ${t2.detail}`, fmt2.out, [['после.sable', once]]); return; }
   if (fmt2.code !== 0) {
     fail('отформатированное-не-разбирается', firstLine(fmt2.out), fmt2.out, [['после.sable', once]]);
@@ -997,7 +1013,7 @@ async function huntInput(seed: number): Promise<void> {
     '\r\nстрока с возвратом\r\n',
     'ю'.repeat(200_000) + '\n',                  // очень длинная строка
     Buffer.from([0xff, 0xfe, 0x41, 0x0a]).toString('latin1'),
-    ' нулевой байт\n',
+    '\0нулевой байт\n',
   ]);
   const src = put(dir, 'ввод.sable', code);
 
@@ -1114,9 +1130,11 @@ async function huntRepl(seed: number): Promise<void> {
     fail('сеанс-не-дожил-до-конца', 'последняя исправная строка не выполнилась');
     return;
   }
-  // История обязана лечь в подменённую домашнюю папку, а не в настоящую.
-  if (res.out.includes('.sable_history') && !res.out.includes(home)) {
-    fail('история-мимо-подменённого-дома', 'в выводе путь к чужой истории');
+  // История обязана лечь в подменённую домашнюю папку. Проверяем файлом, а не
+  // выводом: путь «~/.sable_history» упомянут в тексте справки, и поиск по
+  // выводу принимал справку за утечку.
+  if (script.split('\n').some((l) => l.trim() !== '') && !existsSync(join(home, '.sable_history'))) {
+    fail('история-мимо-подменённого-дома', 'после сеанса истории в подменённом доме нет');
   }
 }
 
