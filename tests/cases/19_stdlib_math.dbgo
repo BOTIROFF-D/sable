@@ -1,0 +1,29 @@
+// Числа: знак, отсечение по границам, логарифмы, тригонометрия
+print(sign(-7), sign(0), sign(3.5))
+print(clamp(15, 0, 10), clamp(-3, 0, 10), clamp(5, 0, 10), clamp(5, 5, 5))
+
+print(round(pi(), 5), round(exp(1), 5), exp(0))
+print(log(1), log(exp(2)), log(8, 2), log(1000, 10), round(log(81, 3), 10))
+print(hypot(3, 4), hypot(1, 2, 2))
+
+print(round(sin(pi() / 2), 10), round(cos(pi()), 10), round(tan(0), 10))
+print(round(atan2(1, 1) * 4, 10), round(asin(1) * 2, 10), acos(1), atan(0))
+
+// на длине окружности видно, что константа настоящая
+let радиус = 3
+print(round(2 * pi() * радиус, 4), round(pi() * pow(радиус, 2), 4))
+
+// clamp удобен на нормировке
+print([-5, 0, 42, 7].map(x -> clamp(x, 0, 10)))
+
+// ---- ошибки ----
+try { log(0) } catch e { print(e.message) }
+try { log(-2) } catch e { print(e.message) }
+try { log(8, 1) } catch e { print(e.message) }
+try { log(8, 0) } catch e { print(e.message) }
+try { clamp(5, 10, 0) } catch e { print(e.message) }
+try { asin(2) } catch e { print(e.message) }
+try { acos(-1.5) } catch e { print(e.message) }
+try { sign("много") } catch e { print(e.message) }
+try { hypot(3) } catch e { print(e.message) }
+try { pi(1) } catch e { print(e.message) }

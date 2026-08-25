@@ -64,10 +64,13 @@ class Checker {
   private reassigned = new Set<string>();
 
   constructor(globals: Iterable<string>) {
-    this.scope = { names: new Map(), parent: null };
+    // Встроенные имена лежат в отдельной внешней области — как в интерпретаторе.
+    // Поэтому `let sum = 0` не «уже объявлено», а законное затенение.
+    const builtins: Scope = { names: new Map(), parent: null };
+    this.scope = { names: new Map(), parent: builtins };
     const nowhere: Span = { line: 0, col: 0, file: '<встроенное>' };
     for (const name of globals) {
-      this.scope.names.set(name, {
+      builtins.names.set(name, {
         name, span: nowhere, kind: 'global',
         mutable: false, warnUnused: false, used: true,
         arity: null, struct: null, instance: null,

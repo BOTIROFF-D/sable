@@ -36,13 +36,28 @@ function wantInt(fn: string, args: Value[], i: number, span: Span): number {
   return n;
 }
 
+function wantList(fn: string, args: Value[], i: number, span: Span): Value[] {
+  const v = args[i];
+  if (!Array.isArray(v)) {
+    throw runtimeError(`${ordinal(i)} аргумент «${fn}» должен быть списком, а получен ${typeName(v ?? null)}`, span);
+  }
+  return v;
+}
+
+/** Целое «сколько штук»: отрицательное количество почти всегда опечатка, а не намерение. */
+function wantCount(fn: string, args: Value[], i: number, span: Span): number {
+  const n = wantInt(fn, args, i, span);
+  if (n < 0) throw runtimeError(`${ordinal(i)} аргумент «${fn}» — количество, оно не может быть отрицательным (получено ${n})`, span);
+  return n;
+}
+
 const arg = (args: Value[], i: number): Value => (i < args.length ? args[i]! : null);
 
 // ---- глобальные функции ---------------------------------------------------
 
 export function installGlobals(interp: Interpreter): void {
   const def = (name: string, min: number, max: number, impl: (a: Value[], s: Span) => Value) => {
-    interp.globals.define(name, new NativeFn(name, min, max, impl), false);
+    interp.builtins.define(name, new NativeFn(name, min, max, impl), false);
   };
   const call = (f: Value, args: Value[], span: Span, who: string): Value => {
     if (!(f instanceof DbgoFunction || f instanceof NativeFn)) {
@@ -105,6 +120,43 @@ export function installGlobals(interp: Interpreter): void {
 
   def('min', 1, Infinity, (args, span) => extremum('min', args, span, (a, b) => a < b));
   def('max', 1, Infinity, (args, span) => extremum('max', args, span, (a, b) => a > b));
+
+  def('sign', 1, 1, (args, span) => Math.sign(wantNumber('sign', args, 0, span)));
+  def('clamp', 3, 3, (args, span) => {
+    const n = wantNumber('clamp', args, 0, span);
+    const lo = wantNumber('clamp', args, 1, span);
+    const hi = wantNumber('clamp', args, 2, span);
+    if (lo > hi) throw runtimeError(`в clamp нижняя граница ${repr(lo)} больше верхней ${repr(hi)}`, span);
+    return Math.min(hi, Math.max(lo, n));
+  });
+
+  def('exp', 1, 1, (args, span) => Math.exp(wantNumber('exp', args, 0, span)));
+  def('log', 1, 2, (args, span) => {
+    const n = wantNumber('log', args, 0, span);
+    if (n <= 0) throw runtimeError(`логарифм определён только для положительных чисел, а получено ${repr(n)}`, span);
+    if (args.length < 2) return Math.log(n);
+    const base = wantNumber('log', args, 1, span);
+    if (base <= 0 || base === 1) {
+      throw runtimeError(`основание логарифма должно быть положительным и не равным 1, а получено ${repr(base)}`, span);
+    }
+    // Двойка и десятка считаются отдельно: через деление логарифмов log(1000, 10) дало бы 2.9999999999999996.
+    if (base === 2) return Math.log2(n);
+    if (base === 10) return Math.log10(n);
+    return Math.log(n) / Math.log(base);
+  });
+
+  def('hypot', 2, Infinity, (args, span) => Math.hypot(...args.map((_, i) => wantNumber('hypot', args, i, span))));
+  def('sin', 1, 1, (args, span) => Math.sin(wantNumber('sin', args, 0, span)));
+  def('cos', 1, 1, (args, span) => Math.cos(wantNumber('cos', args, 0, span)));
+  def('tan', 1, 1, (args, span) => Math.tan(wantNumber('tan', args, 0, span)));
+  def('atan', 1, 1, (args, span) => Math.atan(wantNumber('atan', args, 0, span)));
+  def('atan2', 2, 2, (args, span) => Math.atan2(wantNumber('atan2', args, 0, span), wantNumber('atan2', args, 1, span)));
+  def('asin', 1, 1, (args, span) => unitInterval('asin', args, span, Math.asin));
+  def('acos', 1, 1, (args, span) => unitInterval('acos', args, span, Math.acos));
+
+  // Число π — функцией, а не именем PI: имена в глобальной области нельзя перекрыть
+  // своим let/const, и встроенное PI отняло бы у программы ходовое имя.
+  def('pi', 0, 0, () => Math.PI);
 
   def('random', 0, 0, () => Math.random());
   def('random_int', 2, 2, (args, span) => {
@@ -207,6 +259,40 @@ export function installGlobals(interp: Interpreter): void {
     }
     return total;
   });
+
+  def('zip', 2, 2, (args, span) =>
+    zipSeq(asSeq('zip', arg(args, 0), span), asSeq('zip', arg(args, 1), span)));
+
+  def('enumerate', 1, 1, (args, span) => enumerateSeq(asSeq('enumerate', arg(args, 0), span)));
+
+  def('sorted', 1, 2, (args, span) => {
+    const items = [...asSeq('sorted', arg(args, 0), span)];
+    if (args.length < 2) return items.sort((x, y) => defaultCompare(x, y, span, 'sorted'));
+    return items.sort((x, y) => {
+      const r = call(arg(args, 1), [x, y], span, 'sorted');
+      if (typeof r !== 'number') {
+        throw runtimeError(`функция сравнения в sorted должна вернуть число, а вернула ${typeName(r)}`, span);
+      }
+      return r;
+    });
+  });
+
+  def('reversed', 1, 1, (args, span) => [...asSeq('reversed', arg(args, 0), span)].reverse());
+
+  def('from_entries', 1, 1, (args, span) => {
+    const pairs = wantList('from_entries', args, 0, span);
+    const out = new Map<MapKey, Value>();
+    pairs.forEach((pair, i) => {
+      if (!Array.isArray(pair) || pair.length !== 2) {
+        throw runtimeError(
+          `элемент ${i} в «from_entries» должен быть парой [ключ, значение], а получен ${repr(pair)}`,
+          span,
+        );
+      }
+      out.set(asMapKey(pair[0]!, span), pair[1]!);
+    });
+    return out;
+  });
 }
 
 // ---- вспомогательное ------------------------------------------------------
@@ -220,6 +306,23 @@ function extremum(name: string, args: Value[], span: Span, better: (a: number, b
     if (best === null || better(x, best)) best = x;
   }
   return best!;
+}
+
+function unitInterval(name: string, args: Value[], span: Span, f: (n: number) => number): number {
+  const n = wantNumber(name, args, 0, span);
+  if (n < -1 || n > 1) throw runtimeError(`«${name}» определён только на отрезке от -1 до 1, а получено ${repr(n)}`, span);
+  return f(n);
+}
+
+/** Пары «бок о бок»; лишний хвост длинной последовательности отбрасывается. */
+function zipSeq(a: Value[], b: Value[]): Value[] {
+  const out: Value[] = [];
+  for (let i = 0; i < Math.min(a.length, b.length); i++) out.push([a[i]!, b[i]!]);
+  return out;
+}
+
+function enumerateSeq(items: Value[]): Value[] {
+  return items.map((x, i) => [i as Value, x]);
 }
 
 function asMap(fn: string, v: Value, span: Span): Map<MapKey, Value> {
@@ -335,6 +438,40 @@ const STRING_METHODS: MethodTable = {
     s.padStart(wantInt('pad_start', a, 0, sp), a.length > 1 ? wantString('pad_start', a, 1, sp) : ' ')),
   pad_end: m(1, 2, (s: string, a, sp) =>
     s.padEnd(wantInt('pad_end', a, 0, sp), a.length > 1 ? wantString('pad_end', a, 1, sp) : ' ')),
+  is_empty: m(0, 0, (s: string) => s.length === 0),
+  trim_start: m(0, 0, (s: string) => s.trimStart()),
+  trim_end: m(0, 0, (s: string) => s.trimEnd()),
+  // Последний перевод строки не порождает пустую строку в конце: "a\nb\n" — это две строки, а не три.
+  lines: m(0, 0, (s: string) => {
+    if (s === '') return [] as Value[];
+    const body = s.endsWith('\n') ? s.slice(0, -1) : s;
+    return body.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line)) as Value[];
+  }),
+  words: m(0, 0, (s: string) => {
+    const t = s.trim();
+    return (t === '' ? [] : t.split(/\s+/u)) as Value[];
+  }),
+  capitalize: m(0, 0, (s: string) => capFirst(s)),
+  title: m(0, 0, (s: string) => s.replace(/\S+/gu, (w) => capFirst(w))),
+  count: m(1, 1, (s: string, a, sp) => {
+    const sub = wantString('count', a, 0, sp);
+    if (sub === '') throw runtimeError('«count» не считает пустую подстроку — передайте непустую', sp);
+    return s.split(sub).length - 1;
+  }),
+  split_once: m(1, 1, (s: string, a, sp) => {
+    const sep = wantString('split_once', a, 0, sp);
+    if (sep === '') throw runtimeError('разделитель в «split_once» не может быть пустым', sp);
+    const at = s.indexOf(sep);
+    return at < 0 ? null : ([s.slice(0, at), s.slice(at + sep.length)] as Value);
+  }),
+  format: m(0, Infinity, (s: string, a, sp) => {
+    const holes = s.match(/\{\}/g)?.length ?? 0;
+    if (holes !== a.length) {
+      throw runtimeError(`в «format» подстановок {} — ${holes}, а аргументов — ${a.length}: их должно быть поровну`, sp);
+    }
+    let i = 0;
+    return s.replace(/\{\}/g, () => toStr(a[i++]!));
+  }),
 };
 
 const LIST_METHODS: MethodTable = {
@@ -377,6 +514,133 @@ const LIST_METHODS: MethodTable = {
     l.forEach((x, i) => { acc = it.callCallback(a[0]!, [acc, x, i], sp, 'reduce'); });
     return acc;
   }),
+  is_empty: m(0, 0, (l: Value[]) => l.length === 0),
+  sum: m(0, 0, (l: Value[], _a, sp) => {
+    let total = 0;
+    for (const x of l) {
+      if (typeof x !== 'number') throw runtimeError(`«sum» работает только с числами, встретился ${typeName(x)}`, sp);
+      total += x;
+    }
+    return total;
+  }),
+  avg: m(0, 0, (l: Value[], _a, sp) => {
+    if (l.length === 0) throw runtimeError('«avg» не определено для пустого списка — среднее не из чего считать', sp);
+    let total = 0;
+    for (const x of l) {
+      if (typeof x !== 'number') throw runtimeError(`«avg» работает только с числами, встретился ${typeName(x)}`, sp);
+      total += x;
+    }
+    return total / l.length;
+  }),
+  // Равенство то же, что у contains/index_of. Для простых значений — через Set,
+  // для списков и словарей — сравнением по содержимому.
+  unique: m(0, 0, (l: Value[]) => {
+    const seenPrim = new Set<Value>();
+    const seenDeep: Value[] = [];
+    const out: Value[] = [];
+    for (const x of l) {
+      const simple = x === null || typeof x === 'string' || typeof x === 'boolean'
+        || (typeof x === 'number' && !Number.isNaN(x));
+      if (simple) {
+        if (seenPrim.has(x)) continue;
+        seenPrim.add(x);
+      } else if (Array.isArray(x) || x instanceof Map || x instanceof StructInstance || x instanceof DbgoRange) {
+        if (seenDeep.some((y) => equals(y, x))) continue;
+        seenDeep.push(x);
+      }
+      // nan и функции равны только сами себе по ссылке — их равенство неопределимо, оставляем все.
+      out.push(x);
+    }
+    return out;
+  }),
+  flatten: m(0, 1, (l: Value[], a, sp) => {
+    const depth = a.length ? wantCount('flatten', a, 0, sp) : Infinity;
+    // Глубина по умолчанию не ограничена, поэтому кольцо надо ловить самому.
+    // При явной глубине сторожить нечего: рекурсия и так конечна.
+    const path = new Set<Value[]>();
+    const out: Value[] = [];
+    const walk = (items: Value[], left: number): void => {
+      if (left === Infinity) {
+        if (path.has(items)) throw runtimeError('список ссылается сам на себя — «flatten» не может его развернуть', sp);
+        path.add(items);
+      }
+      for (const x of items) {
+        if (left > 0 && Array.isArray(x)) walk(x, left - 1);
+        else out.push(x);
+      }
+      path.delete(items);
+    };
+    walk(l, depth);
+    return out;
+  }),
+  zip: m(1, 1, (l: Value[], a, sp) => zipSeq(l, asSeq('zip', a[0]!, sp))),
+  enumerate: m(0, 0, (l: Value[]) => enumerateSeq(l)),
+  chunk: m(1, 1, (l: Value[], a, sp) => {
+    const n = wantInt('chunk', a, 0, sp);
+    if (n <= 0) throw runtimeError(`размер куска в «chunk» должен быть больше нуля, а получен ${n}`, sp);
+    const out: Value[] = [];
+    for (let i = 0; i < l.length; i += n) out.push(l.slice(i, i + n));
+    return out;
+  }),
+  take: m(1, 1, (l: Value[], a, sp) => l.slice(0, wantCount('take', a, 0, sp))),
+  drop: m(1, 1, (l: Value[], a, sp) => l.slice(wantCount('drop', a, 0, sp))),
+  // count(f) считает подходящие под условие, count(значение) — равные значению.
+  count: m(1, 1, (l: Value[], a, sp, it) => {
+    const what = a[0]!;
+    if (what instanceof DbgoFunction || what instanceof NativeFn) {
+      let n = 0;
+      l.forEach((x, i) => { if (truthy(it.callCallback(what, [x, i], sp, 'count'))) n++; });
+      return n;
+    }
+    return l.filter((x) => equals(x, what)).length;
+  }),
+  sort_by: m(1, 1, (l: Value[], a, sp, it) => {
+    const keyed = l.map((x, i) => ({ x, key: it.callCallback(a[0]!, [x, i], sp, 'sort_by') }));
+    // Array.sort устойчива по стандарту: равные ключи сохраняют исходный порядок.
+    keyed.sort((p, q) => keyCompare('sort_by', p.key, q.key, sp));
+    return keyed.map((p) => p.x);
+  }),
+  min_by: m(1, 1, (l: Value[], a, sp, it) => extremumBy('min_by', l, a[0]!, sp, it, -1)),
+  max_by: m(1, 1, (l: Value[], a, sp, it) => extremumBy('max_by', l, a[0]!, sp, it, 1)),
+  group_by: m(1, 1, (l: Value[], a, sp, it) => {
+    const out = new Map<MapKey, Value>();
+    l.forEach((x, i) => {
+      const k = it.callCallback(a[0]!, [x, i], sp, 'group_by');
+      if (typeof k !== 'string' && typeof k !== 'number' && typeof k !== 'boolean') {
+        throw runtimeError(`функция в «group_by» должна вернуть ключ — строку, число или bool, а вернула ${typeName(k)}`, sp);
+      }
+      const bucket = out.get(k);
+      if (bucket) (bucket as Value[]).push(x);
+      else out.set(k, [x]);
+    });
+    return out;
+  }),
+  sum_by: m(1, 1, (l: Value[], a, sp, it) => {
+    let total = 0;
+    l.forEach((x, i) => {
+      const v = it.callCallback(a[0]!, [x, i], sp, 'sum_by');
+      if (typeof v !== 'number') throw runtimeError(`функция в «sum_by» должна вернуть число, а вернула ${typeName(v)}`, sp);
+      total += v;
+    });
+    return total;
+  }),
+  partition: m(1, 1, (l: Value[], a, sp, it) => {
+    const yes: Value[] = [];
+    const no: Value[] = [];
+    l.forEach((x, i) => { (truthy(it.callCallback(a[0]!, [x, i], sp, 'partition')) ? yes : no).push(x); });
+    return [yes, no];
+  }),
+  flat_map: m(1, 1, (l: Value[], a, sp, it) => {
+    const out: Value[] = [];
+    l.forEach((x, i) => {
+      const part = it.callCallback(a[0]!, [x, i], sp, 'flat_map');
+      if (!Array.isArray(part)) {
+        throw runtimeError(`функция в «flat_map» должна вернуть список, а вернула ${typeName(part)} — оберните значение в [ ]`, sp);
+      }
+      out.push(...part);
+    });
+    return out;
+  }),
   sort: m(0, 1, (l: Value[], a, sp, it) => {
     const copy = [...l];
     if (a.length === 0) return copy.sort((x, y) => defaultCompare(x, y, sp));
@@ -412,6 +676,41 @@ const MAP_METHODS: MethodTable = {
     const other = asMap('merge', a[0]!, sp);
     return new Map([...mp, ...other]);
   }),
+  is_empty: m(0, 0, (mp: Map<MapKey, Value>) => mp.size === 0),
+  // Колбэк получает (значение, ключ): чаще нужно именно значение, и лямбда с одним параметром получит его.
+  map_values: m(1, 1, (mp: Map<MapKey, Value>, a, sp, it) => {
+    const out = new Map<MapKey, Value>();
+    for (const [k, v] of mp) out.set(k, it.callCallback(a[0]!, [v, k as Value], sp, 'map_values'));
+    return out;
+  }),
+  filter: m(1, 1, (mp: Map<MapKey, Value>, a, sp, it) => {
+    const out = new Map<MapKey, Value>();
+    for (const [k, v] of mp) {
+      if (truthy(it.callCallback(a[0]!, [v, k as Value], sp, 'filter'))) out.set(k, v);
+    }
+    return out;
+  }),
+  // Порядок ключей в pick задаёт список, а не исходный словарь: так им удобно раскладывать колонки.
+  pick: m(1, 1, (mp: Map<MapKey, Value>, a, sp) => {
+    const out = new Map<MapKey, Value>();
+    for (const raw of wantList('pick', a, 0, sp)) {
+      const k = asMapKey(raw, sp);
+      if (mp.has(k)) out.set(k, mp.get(k)!);
+    }
+    return out;
+  }),
+  omit: m(1, 1, (mp: Map<MapKey, Value>, a, sp) => {
+    const drop = new Set<MapKey>(wantList('omit', a, 0, sp).map((raw) => asMapKey(raw, sp)));
+    const out = new Map<MapKey, Value>();
+    for (const [k, v] of mp) if (!drop.has(k)) out.set(k, v);
+    return out;
+  }),
+  get_or_insert: m(2, 2, (mp: Map<MapKey, Value>, a, sp) => {
+    const k = asMapKey(a[0]!, sp);
+    if (mp.has(k)) return mp.get(k)!;
+    mp.set(k, a[1]!);
+    return a[1]!;
+  }),
 };
 
 const RANGE_METHODS: MethodTable = {
@@ -430,13 +729,42 @@ function sliceBounds(fn: string, length: number, args: Value[], span: Span): [nu
   return [from, Math.max(from, to)];
 }
 
-function defaultCompare(a: Value, b: Value, span: Span): number {
+function defaultCompare(a: Value, b: Value, span: Span, fn = 'sort'): number {
   if (typeof a === 'number' && typeof b === 'number') return a - b;
   if (typeof a === 'string' && typeof b === 'string') return a < b ? -1 : a > b ? 1 : 0;
   throw runtimeError(
-    `sort без функции сравнения работает только со списком чисел или строк, а встретились ${typeName(a)} и ${typeName(b)}`,
+    `${fn} без функции сравнения работает только со списком чисел или строк, а встретились ${typeName(a)} и ${typeName(b)}`,
     span,
   );
+}
+
+/** Элемент с наименьшим (dir = -1) или наибольшим (dir = 1) ключом. Первый из равных. */
+function extremumBy(fn: string, l: Value[], f: Value, span: Span, it: Interpreter, dir: number): Value {
+  if (l.length === 0) throw runtimeError(`«${fn}» нужен непустой список`, span);
+  let best = l[0]!;
+  let bestKey = it.callCallback(f, [best, 0], span, fn);
+  for (let i = 1; i < l.length; i++) {
+    const key = it.callCallback(f, [l[i]!, i], span, fn);
+    if (keyCompare(fn, key, bestKey, span) * dir > 0) { best = l[i]!; bestKey = key; }
+  }
+  return best;
+}
+
+/** Сравнение ключей, вычисленных функцией: sort_by, min_by, max_by. */
+function keyCompare(fn: string, a: Value, b: Value, span: Span): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  if (typeof a === 'string' && typeof b === 'string') return a < b ? -1 : a > b ? 1 : 0;
+  throw runtimeError(
+    `функция в «${fn}» должна возвращать числа или строки, а вернула ${typeName(a)} и ${typeName(b)}`,
+    span,
+  );
+}
+
+/** Первая буква заглавная, остальное не трогаем: «iPhone» не должен стать «Iphone». */
+function capFirst(s: string): string {
+  const chars = [...s];
+  if (chars.length === 0) return s;
+  return chars[0]!.toUpperCase() + chars.slice(1).join('');
 }
 
 const TABLES: Array<[(v: Value) => boolean, MethodTable]> = [

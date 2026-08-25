@@ -60,7 +60,7 @@ function checkFile(path: string): number {
 
   // Интерпретатор создаётся только ради списка встроенных имён — программа не выполняется.
   const interp = new Interpreter({ write: () => {} }, full);
-  const diags = check(program, interp.globals.ownEntries().keys());
+  const diags = check(program, interp.builtins.ownEntries().keys());
 
   const errors = diags.filter((d) => d.severity === 'error').length;
   const warnings = diags.length - errors;

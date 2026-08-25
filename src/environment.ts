@@ -7,9 +7,12 @@ type Slot = { value: Value; mutable: boolean };
 export class Environment {
   private slots = new Map<string, Slot>();
   parent: Environment | null;
+  /** Область встроенных имён: её можно затенить своим объявлением, но не изменить. */
+  readonly isBuiltins: boolean;
 
-  constructor(parent: Environment | null = null) {
+  constructor(parent: Environment | null = null, isBuiltins = false) {
     this.parent = parent;
+    this.isBuiltins = isBuiltins;
   }
 
   define(name: string, value: Value, mutable: boolean, span: Span | null = null): void {
@@ -42,6 +45,13 @@ export class Environment {
     for (let env: Environment | null = this; env; env = env.parent) {
       const slot = env.slots.get(name);
       if (slot) {
+        if (env.isBuiltins) {
+          throw runtimeError(
+            `«${name}» — встроенная функция, присваивать ей нельзя; ` +
+            `объявите своё имя: let ${name} = ...`,
+            span,
+          );
+        }
         if (!slot.mutable) throw runtimeError(`«${name}» объявлено через const — менять нельзя`, span);
         slot.value = value;
         return;

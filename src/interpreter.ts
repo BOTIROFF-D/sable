@@ -28,6 +28,8 @@ export type Host = {
 };
 
 export class Interpreter {
+  /** Встроенные имена. Отдельная область, чтобы `let sum = 0` затенял `sum`, а не падал. */
+  builtins: Environment;
   globals: Environment;
   private env: Environment;
   private stack: Array<{ name: string; span: Span }> = [];
@@ -37,7 +39,8 @@ export class Interpreter {
   private currentFile: string;
 
   constructor(host: Host = { write: (t) => process.stdout.write(t) }, entryFile = join(process.cwd(), '<input>')) {
-    this.globals = new Environment(null);
+    this.builtins = new Environment(null, true);
+    this.globals = new Environment(this.builtins);
     this.env = this.globals;
     this.host = host;
     this.currentFile = entryFile;
@@ -602,9 +605,11 @@ export class Interpreter {
 
   private checkArity(name: string, got: number, min: number, max: number, span: Span): void {
     if (got >= min && got <= max) return;
-    const need = min === max ? `${min}` : `от ${min} до ${max}`;
+    const need = min === max ? `${min}`
+      : max === Infinity ? `хотя бы ${min}`
+      : `от ${min} до ${max}`;
     throw runtimeError(
-      `«${name}» ожидает ${need} ${plural(max)}, а получила ${got}`,
+      `«${name}» ожидает ${need} ${plural(max === Infinity ? min : max)}, а получила ${got}`,
       span,
     );
   }

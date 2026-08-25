@@ -1,0 +1,67 @@
+// Списки: агрегаты, перестройка, группировки
+let xs = [3, 1, 4, 1, 5, 9, 2, 6]
+
+print(xs.sum(), xs.avg(), [].sum(), [1, 2].is_empty(), [].is_empty())
+print([1, 1, 2, "1", true, true, nil, nil].unique())
+print([[1], [1], [2]].unique(), [].unique())
+
+print([1, [2, [3, [4]]]].flatten())
+print([1, [2, [3, [4]]]].flatten(1), [1, [2]].flatten(0))
+
+print([1, 2, 3].zip(["a", "b"]), [1].zip([]), [10, 20].enumerate(), [].enumerate())
+print(xs.chunk(3), xs.chunk(100), [].chunk(2))
+print(xs.take(3), xs.drop(6), xs.take(0), xs.drop(99))
+
+// count(значение) считает равные, count(функция) — подходящие
+print(xs.count(1), xs.count(x -> x > 3), xs.count((x, i) -> i < 2), [].count(x -> true))
+
+let люди = [
+  { имя: "Ali", возраст: 30 },
+  { имя: "Vali", возраст: 25 },
+  { имя: "Gul", возраст: 30 },
+]
+print(люди.sort_by(p -> p.возраст).map(p -> p.имя))       // равные ключи сохраняют порядок
+print(люди.sort_by(p -> p.имя).map(p -> p.имя))
+print(люди.min_by(p -> p.возраст).имя, люди.max_by(p -> p.возраст).имя)
+print(люди.sum_by(p -> p.возраст), люди.count(p -> p.возраст == 30))
+
+let по_возрасту = люди.group_by(p -> p.возраст)
+print(по_возрасту.keys(), по_возрасту[30].len())
+print(по_возрасту.map_values(g -> g.len()))
+
+let части = xs.partition(x -> x % 2 == 0)
+print(части[0], части[1])
+print(["ab", "c"].flat_map(s -> s.chars()), [[1], [2, 3], []].flat_map(x -> x))
+
+// свободные функции: работают со списком, строкой и диапазоном
+print(zip("абв", 0..3), enumerate("аб"))
+print(sorted([3, 1, 2]), sorted("бав"), sorted([3, 1, 2], (a, b) -> b - a))
+print(reversed(0..4), reversed("абв"))
+print(from_entries([["a", 1], [2, true]]), from_entries([]))
+print(from_entries(entries({ a: 1, b: 2 }).map(p -> [p[0], p[1] * 10])))
+
+// цепочка целиком
+print(range(1, 11).filter(n -> n % 3 != 0).chunk(3).map(c -> c.sum()))
+
+// ---- ошибки ----
+try { [].avg() } catch e { print(e.message) }
+try { [].min_by(x -> x) } catch e { print(e.message) }
+try { xs.take(-1) } catch e { print(e.message) }
+try { xs.chunk(0) } catch e { print(e.message) }
+try { xs.flatten(-1) } catch e { print(e.message) }
+try { [1, "два"].sum() } catch e { print(e.message) }
+try { [1, "два"].avg() } catch e { print(e.message) }
+try { [1, 2].sort_by(x -> [x]) } catch e { print(e.message) }
+try { [1, 2].group_by(x -> [x]) } catch e { print(e.message) }
+try { [1, 2].sum_by(x -> "нет") } catch e { print(e.message) }
+try { [1].flat_map(x -> x) } catch e { print(e.message) }
+try { [1].zip(7) } catch e { print(e.message) }
+try { [1].count(1, 2) } catch e { print(e.message) }
+try { sorted([[1], [2]]) } catch e { print(e.message) }
+try { from_entries([["a", 1], "нет"]) } catch e { print(e.message) }
+try { from_entries([[[1], 2]]) } catch e { print(e.message) }
+
+let цикл = [1]
+цикл.push(цикл)
+try { цикл.flatten() } catch e { print(e.message) }
+print(цикл.flatten(1).len())

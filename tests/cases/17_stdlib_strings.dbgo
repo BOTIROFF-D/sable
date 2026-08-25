@@ -1,0 +1,41 @@
+// Строки: разбор текста, регистр, шаблоны
+let текст = "  Привет, мир!  "
+print(repr(текст.trim_start()), repr(текст.trim_end()), repr(текст.trim()))
+print("".is_empty(), " ".is_empty(), "аб".is_empty())
+
+let файл = "первая\nвторая\r\nтретья\n"
+print(файл.lines())
+print("".lines(), "\n".lines(), "без перевода".lines())
+print("  раз  два\tтри\n".words(), "".words(), "   ".words())
+
+print("привет мир".capitalize(), "iPhone".capitalize(), repr("".capitalize()))
+print("привет мир".title(), repr("  два   слова ".title()))
+print("😀аб".capitalize(), "ПРИВЕТ".lower().capitalize())
+
+print("абракадабра".count("а"), "aaaa".count("aa"), "абв".count("г"), "абв".count("абв"))
+print("ключ=значение=ещё".split_once("="))
+print("нет разделителя".split_once("="), "=с краю".split_once("="))
+
+print("{} + {} = {}".format(2, 2, 4))
+print("Привет, {}!".format("мир"))
+print("{}".format([1, 2]), "{}".format(nil), repr("без подстановок".format()))
+
+// строки собираются из кусков без ${}
+let шаблон = "Здравствуйте, {}! Ваш баланс — {} сум."
+print(шаблон.format("Ali", 12000))
+
+// разбор строки целиком
+let csv = "имя,цена\nхлеб,5000\nмолоко,12000"
+let строки = csv.lines()
+let заголовки = строки.first().split(",")
+let записи = строки.drop(1).map(r -> from_entries(zip(заголовки, r.split(","))))
+print(записи)
+print(записи.sum_by(z -> num(z.цена)))
+
+// ---- ошибки ----
+try { "{}".format() } catch e { print(e.message) }
+try { "{}".format(1, 2) } catch e { print(e.message) }
+try { "абв".count("") } catch e { print(e.message) }
+try { "абв".split_once("") } catch e { print(e.message) }
+try { "абв".count(5) } catch e { print(e.message) }
+try { "абв".lines(1) } catch e { print(e.message) }

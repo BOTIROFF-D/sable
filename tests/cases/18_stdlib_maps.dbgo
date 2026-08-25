@@ -1,0 +1,37 @@
+// Словари: преобразование значений, отбор ключей, накопление
+let цены = { хлеб: 5000, молоко: 12000, сыр: 45000 }
+
+print(цены.map_values(v -> v / 1000))
+print(цены.filter(v -> v > 10000))
+print(цены.filter((v, k) -> k.starts_with("м")))     // колбэк получает (значение, ключ)
+print(цены.pick(["сыр", "хлеб", "нет такого"]))
+print(цены.omit(["сыр"]), цены.omit([]))
+print(цены.is_empty(), {}.is_empty(), цены.len())
+
+// исходный словарь не тронут
+print(цены)
+
+let счётчики = {}
+for слово in ["а", "б", "а", "в", "а"] {
+  счётчики[слово] = счётчики.get(слово, 0) + 1
+}
+print(счётчики, счётчики.entries().max_by(p -> p[1])[0])
+
+// get_or_insert возвращает то, что уже лежит, — накопитель растёт на месте
+let корзины = {}
+корзины.get_or_insert("фрукты", []).push("яблоко")
+корзины.get_or_insert("фрукты", []).push("груша")
+print(корзины, корзины.len())
+print(корзины.get_or_insert("овощи", ["лук"]), корзины.len())
+
+print(from_entries(цены.entries().map(p -> [p[0].upper(), p[1]])))
+print(цены.entries().sort_by(p -> -p[1]).map(p -> p[0]))
+
+// ---- ошибки ----
+try { цены.pick("сыр") } catch e { print(e.message) }
+try { цены.omit(5) } catch e { print(e.message) }
+try { цены.map_values(7) } catch e { print(e.message) }
+try { цены.get_or_insert([1], 2) } catch e { print(e.message) }
+try { from_entries([["a", 1], "нет"]) } catch e { print(e.message) }
+try { from_entries([[[1], 2]]) } catch e { print(e.message) }
+try { from_entries({ a: 1 }) } catch e { print(e.message) }
