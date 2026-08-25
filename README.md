@@ -213,6 +213,17 @@ Citibank. IELTS 9.0 — высший возможный балл, SAT 1590 из 
 
 Связь: [botiroff.com](https://botiroff.com) · [t.me/mrdoniyor](https://t.me/mrdoniyor) · [github.com/BOTIROFF-D](https://github.com/BOTIROFF-D)
 
-## Лицензия
+## Лицензия и имя
 
-MIT — см. [LICENSE](LICENSE). Copyright © 2026 Doniyor Botirov.
+Код — под [MIT](LICENSE), Copyright © 2026 Doniyor Botirov. Форкайте, меняйте,
+берите в коммерческие проекты; единственное условие — сохранить копирайт.
+
+Лицензия распространяется на **исходный код и не даёт прав на название**.
+«Sable» — имя проекта, принадлежащее THE BOTIROFF LLC. Выпускать форк под этим
+именем или так, чтобы он выглядел официальной версией, нельзя: назовите его
+своим именем, этого достаточно.
+
+**Name.** The MIT license covers the source code and grants no rights to the
+project name. “Sable” is a project name of THE BOTIROFF LLC. Fork and use the
+code freely — just don't ship your fork under the Sable name, or in a way that
+implies it is the official version.
