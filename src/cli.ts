@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { DbgoError, formatError } from './errors.ts';
+import { DbgoError, formatError, registerSource, shortPath } from './errors.ts';
 import { Interpreter } from './interpreter.ts';
 import { tokenize } from './lexer.ts';
 import { parse } from './parser.ts';
@@ -27,8 +27,9 @@ function runFile(path: string): number {
     process.stderr.write(`${LANG}: не удалось открыть файл «${path}»\n`);
     return 66;
   }
-  const file = basename(full);
-  const interp = new Interpreter();
+  const file = shortPath(full, relative(process.cwd(), full));
+  registerSource(file, source);
+  const interp = new Interpreter(undefined, full);
   try {
     runSource(source, file, interp);
     return 0;

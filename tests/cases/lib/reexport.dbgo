@@ -1,0 +1,2 @@
+import "counter.dbgo" as c
+fn дважды() { c.считать(); return c.считать() }

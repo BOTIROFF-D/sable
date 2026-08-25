@@ -31,6 +31,30 @@ export const lexError = (m: string, s: Span) => new DbgoError('lex', m, s);
 export const parseError = (m: string, s: Span) => new DbgoError('parse', m, s);
 export const runtimeError = (m: string, s: Span | null = null) => new DbgoError('runtime', m, s);
 
+/**
+ * Исходники всех файлов, которые успели попасть в программу.
+ * Нужны, чтобы ошибка внутри подключённого модуля показывала СВОЮ строку,
+ * а не строку с тем же номером из главного файла.
+ */
+const SOURCES = new Map<string, string>();
+
+/**
+ * Как показать путь пользователю: относительный, если файл внутри рабочей папки,
+ * иначе абсолютный — «../../../tmp/...» читать невозможно.
+ */
+export function shortPath(full: string, rel: string): string {
+  if (rel === '' || rel.startsWith('..')) return full;
+  return rel;
+}
+
+export function registerSource(file: string, text: string): void {
+  SOURCES.set(file, text);
+}
+
+export function forgetSources(): void {
+  SOURCES.clear();
+}
+
 const STAGE_TITLE: Record<string, string> = {
   lex: 'Ошибка разбора символов',
   parse: 'Ошибка синтаксиса',
@@ -48,7 +72,7 @@ export function formatError(err: DbgoError, source: string): string {
   if (err.span) {
     const { line, col, file } = err.span;
     out.push(`  --> ${file}:${line}:${col}`);
-    const lines = source.split('\n');
+    const lines = (SOURCES.get(file) ?? source).split('\n');
     const gutter = String(line).length;
     const pad = ' '.repeat(gutter);
     const src = lines[line - 1];

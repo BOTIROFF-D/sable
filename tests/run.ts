@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DbgoError, formatError } from '../src/errors.ts';
+import { DbgoError, forgetSources, formatError, registerSource } from '../src/errors.ts';
 import { Interpreter } from '../src/interpreter.ts';
 import { tokenize } from '../src/lexer.ts';
 import { parse } from '../src/parser.ts';
@@ -17,9 +17,11 @@ const update = process.argv.includes('--update');
 const only = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length);
 
 /** Прогон файла с перехватом вывода: ошибки печатаются так же, как в CLI. */
-function runCase(source: string, file: string): string {
+function runCase(source: string, file: string, fullPath: string): string {
   let out = '';
-  const interp = new Interpreter({ write: (t) => { out += t; } });
+  // Исходник под своим отображаемым именем — чтобы ошибка внутри модуля показала свою строку.
+  registerSource(file, source);
+  const interp = new Interpreter({ write: (t) => { out += t; } }, fullPath);
   try {
     interp.run(parse(tokenize(source, file), file));
   } catch (e) {
@@ -59,7 +61,8 @@ const failures: string[] = [];
 for (const { file, dir, goldenDir } of files) {
   const source = readFileSync(join(dir, file), 'utf8');
   const goldenPath = join(goldenDir, file.replace(/\.dbgo$/, '.expected'));
-  const actual = runCase(source, file);
+  forgetSources();
+  const actual = runCase(source, file, join(dir, file));
 
   if (update || !existsSync(goldenPath)) {
     writeFileSync(goldenPath, actual, 'utf8');

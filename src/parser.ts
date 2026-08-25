@@ -19,6 +19,8 @@ export class Parser {
   private file: string;
   /** Пока > 0, «{» после выражения читается как блок, а не как словарь. */
   private noMapLiteral = 0;
+  /** Глубина вложенности блоков: import разрешён только на верхнем уровне. */
+  private blockDepth = 0;
 
   constructor(tokens: Token[], file = '<input>') {
     this.tokens = tokens;
@@ -90,10 +92,27 @@ export class Parser {
   }
 
   private declaration(): Stmt {
+    if (this.check('IMPORT')) return this.importDecl();
     if (this.check('LET') || this.check('CONST')) return this.varDecl();
     if (this.check('FN') && this.peek(1).type === 'IDENT') return this.fnDecl();
     if (this.check('STRUCT')) return this.structDecl();
     return this.statement();
+  }
+
+  private importDecl(): Stmt {
+    const kw = this.advance();
+    if (this.blockDepth > 0) {
+      throw parseError(
+        'import разрешён только на верхнем уровне файла — перенесите его в начало',
+        kw.span,
+      );
+    }
+    const path = this.expect('STRING', 'путь к файлу в кавычках, например "utils.dbgo"');
+    if (path.parts) throw parseError('путь к модулю не может содержать вставку ${...}', path.span);
+    this.expect('AS', '«as» и имя, под которым подключается модуль');
+    const alias = this.expect('IDENT', 'имя, под которым будет доступен модуль');
+    this.endStatement();
+    return { kind: 'Import', path: String(path.value), alias: String(alias.value), span: kw.span };
   }
 
   private varDecl(): Stmt {
@@ -172,10 +191,15 @@ export class Parser {
   private block(): Stmt[] {
     this.expect('LBRACE', '«{» и тело блока');
     const body: Stmt[] = [];
-    this.skipSeparators();
-    while (!this.check('RBRACE') && !this.atEnd()) {
-      body.push(this.declaration());
+    this.blockDepth++;
+    try {
       this.skipSeparators();
+      while (!this.check('RBRACE') && !this.atEnd()) {
+        body.push(this.declaration());
+        this.skipSeparators();
+      }
+    } finally {
+      this.blockDepth--;
     }
     this.expect('RBRACE', '«}» в конце блока');
     return body;

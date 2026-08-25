@@ -1,0 +1,11 @@
+import "lib/greet.dbgo" as g
+import "lib/counter.dbgo" as c
+import "lib/reexport.dbgo" as re
+
+print(g.привет("мир"))
+print(g.удвоить(21), g.ЯЗЫК)
+print(g.Метка("тише").громко())
+print(type(g))
+
+// модуль выполняется ровно один раз — «counter выполнен» напечатано выше единожды
+print(c.считать(), re.дважды(), c.считать())

@@ -19,6 +19,13 @@ export class Environment {
     this.slots.set(name, { value, mutable });
   }
 
+  /** Имена, объявленные именно здесь (без внешних областей) — экспорт модуля. */
+  ownEntries(): Map<string, Value> {
+    const out = new Map<string, Value>();
+    for (const [name, slot] of this.slots) out.set(name, slot.value);
+    return out;
+  }
+
   has(name: string): boolean {
     return this.slots.has(name) || (this.parent?.has(name) ?? false);
   }

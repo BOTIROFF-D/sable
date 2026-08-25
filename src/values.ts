@@ -73,6 +73,20 @@ export class StructDef {
   }
 }
 
+export class DbgoModule {
+  /** Имя, под которым модуль подключён — для сообщений об ошибках. */
+  alias: string;
+  /** Путь к файлу модуля относительно текущей папки. */
+  path: string;
+  exports: Map<string, Value>;
+
+  constructor(alias: string, path: string, exports: Map<string, Value>) {
+    this.alias = alias;
+    this.path = path;
+    this.exports = exports;
+  }
+}
+
 export class StructInstance {
   def: StructDef;
   fields: Map<string, Value>;
@@ -87,7 +101,7 @@ export type Value =
   | number | string | boolean | null
   | Value[]
   | Map<MapKey, Value>
-  | DbgoFunction | NativeFn | DbgoRange | StructDef | StructInstance;
+  | DbgoFunction | NativeFn | DbgoRange | StructDef | StructInstance | DbgoModule;
 
 // ---- предикаты и имена типов ---------------------------------------------
 
@@ -102,6 +116,7 @@ export function typeName(v: Value): string {
   if (v instanceof DbgoFunction || v instanceof NativeFn) return 'fn';
   if (v instanceof StructDef) return 'struct';
   if (v instanceof StructInstance) return v.def.name;
+  if (v instanceof DbgoModule) return 'module';
   return 'unknown';
 }
 
@@ -182,6 +197,7 @@ export function repr(v: Value, seen: Set<object> = new Set()): string {
   if (v instanceof DbgoFunction) return `<fn ${v.name ?? 'аноним'}>`;
   if (v instanceof NativeFn) return `<встроенная ${v.name}>`;
   if (v instanceof StructDef) return `<struct ${v.name}>`;
+  if (v instanceof DbgoModule) return `<модуль ${v.alias} из ${v.path}>`;
   if (v instanceof StructInstance) {
     if (seen.has(v)) return `${v.def.name}{...}`;
     seen.add(v);

@@ -1,9 +1,11 @@
+import { join } from 'node:path';
 import type { Expr, Param, Program, Stmt } from './ast.ts';
 import { DbgoError, runtimeError, type Span } from './errors.ts';
 import { Environment } from './environment.ts';
+import { ModuleLoader } from './modules.ts';
 import { getMethod, installGlobals } from './stdlib.ts';
 import {
-  NativeFn, DbgoFunction, DbgoRange, StructDef, StructInstance,
+  DbgoModule, NativeFn, DbgoFunction, DbgoRange, StructDef, StructInstance,
   asMapKey, equals, isCallable, repr, toStr, truthy, typeName,
   type MapKey, type Value,
 } from './values.ts';
@@ -30,12 +32,32 @@ export class Interpreter {
   private env: Environment;
   private stack: Array<{ name: string; span: Span }> = [];
   host: Host;
+  private modules = new ModuleLoader();
+  /** Абсолютный путь к файлу, который выполняется сейчас — от него считаются пути import. */
+  private currentFile: string;
 
-  constructor(host: Host = { write: (t) => process.stdout.write(t) }) {
+  constructor(host: Host = { write: (t) => process.stdout.write(t) }, entryFile = join(process.cwd(), '<input>')) {
     this.globals = new Environment(null);
     this.env = this.globals;
     this.host = host;
+    this.currentFile = entryFile;
     installGlobals(this);
+  }
+
+  /**
+   * Выполнить подключаемый файл в собственной области видимости
+   * и отдать объявленные в нём имена наружу.
+   */
+  runModule(program: Program, file: string): Map<string, Value> {
+    const moduleEnv = new Environment(this.globals);
+    const prevFile = this.currentFile;
+    this.currentFile = file;
+    try {
+      this.executeBlock(program, moduleEnv);
+    } finally {
+      this.currentFile = prevFile;
+    }
+    return moduleEnv.ownEntries();
   }
 
   run(program: Program): void {
@@ -73,6 +95,12 @@ export class Interpreter {
 
   private execute(stmt: Stmt): void {
     switch (stmt.kind) {
+      case 'Import': {
+        const mod = this.modules.load(this, stmt.path, this.currentFile, stmt.alias, stmt.span);
+        this.env.define(stmt.alias, mod, false, stmt.span);
+        return;
+      }
+
       case 'ExprStmt':
         this.evaluate(stmt.expr);
         return;
@@ -261,6 +289,9 @@ export class Interpreter {
 
     if (target.kind === 'Get') {
       const obj = this.evaluate(target.object);
+      if (obj instanceof DbgoModule) {
+        throw runtimeError(`имена модуля «${obj.alias}» менять нельзя`, expr.span);
+      }
       if (obj instanceof StructInstance) {
         if (!obj.fields.has(target.name)) {
           throw runtimeError(`у ${obj.def.name} нет поля «${target.name}»`, expr.span);
@@ -377,6 +408,24 @@ export class Interpreter {
   getMember(obj: Value, name: string, span: Span): Value {
     if (obj === null) {
       throw runtimeError(`нельзя обратиться к «${name}» у nil — проверьте значение или используйте «??»`, span);
+    }
+
+    if (obj instanceof DbgoModule) {
+      if (obj.exports.has(name)) return obj.exports.get(name)!;
+      const near = nearest(name, [...obj.exports.keys()]);
+      throw runtimeError(
+        `в модуле «${obj.alias}» нет имени «${name}»${near ? ` — возможно, имелось в виду «${near}»` : ''}`,
+        span,
+      );
+    }
+
+    if (obj instanceof DbgoModule) {
+      if (obj.exports.has(name)) return obj.exports.get(name)!;
+      const near = nearest(name, [...obj.exports.keys()]);
+      throw runtimeError(
+        `в модуле «${obj.alias}» нет имени «${name}»${near ? ` — возможно, имелось в виду «${near}»` : ''}`,
+        span,
+      );
     }
 
     if (obj instanceof StructInstance) {
@@ -536,6 +585,31 @@ export class Interpreter {
       span,
     );
   }
+}
+
+/** Ближайшее по написанию имя — для подсказки «возможно, имелось в виду». */
+function nearest(name: string, known: string[]): string | null {
+  let best: string | null = null;
+  let bestDist = Infinity;
+  for (const k of known) {
+    if (Math.abs(k.length - name.length) > 3) continue;
+    let d = 0;
+    const a = name.toLowerCase();
+    const b = k.toLowerCase();
+    const prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      let diag = prev[0]!;
+      prev[0] = i;
+      for (let j = 1; j <= b.length; j++) {
+        const tmp = prev[j]!;
+        prev[j] = Math.min(prev[j]! + 1, prev[j - 1]! + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
+        diag = tmp;
+      }
+    }
+    d = prev[b.length]!;
+    if (d < bestDist) { bestDist = d; best = k; }
+  }
+  return best && bestDist <= Math.max(1, Math.floor(name.length / 3)) ? best : null;
 }
 
 function plural(n: number): string {

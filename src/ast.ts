@@ -26,6 +26,7 @@ export type Stmt =
   | { kind: 'VarDecl'; mutable: boolean; name: string; init: Expr; span: Span }
   | { kind: 'FnDecl'; name: string; params: Param[]; body: Stmt[]; span: Span }
   | { kind: 'StructDecl'; name: string; fields: Param[]; methods: Array<{ name: string; params: Param[]; body: Stmt[]; span: Span }>; span: Span }
+  | { kind: 'Import'; path: string; alias: string; span: Span }
   | { kind: 'ExprStmt'; expr: Expr; span: Span }
   | { kind: 'Block'; body: Stmt[]; span: Span }
   | { kind: 'If'; cond: Expr; then: Stmt; else: Stmt | null; span: Span }
