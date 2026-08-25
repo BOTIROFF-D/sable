@@ -3,10 +3,10 @@ import { readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { check } from './checker.ts';
-import { DbgoError, formatAt, formatError, registerSource, shortPath } from './errors.ts';
+import { DbgoError, formatAt, formatError, formatErrors, registerSource, shortPath } from './errors.ts';
 import { Interpreter } from './interpreter.ts';
 import { tokenize } from './lexer.ts';
-import { parse } from './parser.ts';
+import { parse, parseAll } from './parser.ts';
 import { repr, type Value } from './values.ts';
 
 export const LANG = 'dbgo';
@@ -49,7 +49,12 @@ function checkFile(path: string): number {
 
   let program;
   try {
-    program = parse(tokenize(source, file), file);
+    const parsed = parseAll(tokenize(source, file), file);
+    if (parsed.errors.length > 0) {
+      process.stderr.write(formatErrors(parsed.errors, source) + '\n');
+      return 65;
+    }
+    program = parsed.program;
   } catch (e) {
     if (e instanceof DbgoError) {
       process.stderr.write(formatError(e, source) + '\n');
@@ -89,14 +94,32 @@ function runFile(path: string): number {
   }
   const file = shortPath(full, relative(process.cwd(), full));
   registerSource(file, source);
+
+  let program;
+  try {
+    const parsed = parseAll(tokenize(source, file), file);
+    if (parsed.errors.length > 0) {
+      process.stderr.write(formatErrors(parsed.errors, source) + '\n');
+      return 65;
+    }
+    program = parsed.program;
+  } catch (e) {
+    // Лексер до разбора не доходит: сломанный символ или незакрытая строка — одна ошибка.
+    if (e instanceof DbgoError) {
+      process.stderr.write(formatError(e, source) + '\n');
+      return 65;
+    }
+    throw e;
+  }
+
   const interp = new Interpreter(undefined, full);
   try {
-    runSource(source, file, interp);
+    interp.run(program);
     return 0;
   } catch (e) {
     if (e instanceof DbgoError) {
       process.stderr.write(formatError(e, source) + '\n');
-      return e.stage === 'runtime' ? 70 : 65;
+      return 70;
     }
     throw e;
   }

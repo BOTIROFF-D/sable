@@ -1,0 +1,15 @@
+// Словари: запись, чтение по ключу и через точку, has/get.
+// ops: 600000
+let m = {}
+let i = 0
+while i < 100000 {
+  m["k${i % 5000}"] = i
+  i = i + 1
+}
+let acc = 0
+let j = 0
+while j < 100000 {
+  acc = acc + m["k${j % 5000}"]
+  j = j + 1
+}
+print(acc, m.len())

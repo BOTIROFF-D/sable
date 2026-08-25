@@ -1,0 +1,18 @@
+// Структуры: создание, чтение и запись полей, вызов методов.
+// ops: 600000
+struct Точка {
+  x
+  y = 0
+  fn длина2() { return self.x * self.x + self.y * self.y }
+  fn сдвиг(d) { return Точка(self.x + d, self.y + d) }
+}
+let acc = 0
+let i = 0
+while i < 100000 {
+  let p = Точка(i % 100, i % 37)
+  acc = acc + p.длина2() + p.сдвиг(1).x
+  p.x = 0
+  acc = acc + p.x
+  i = i + 1
+}
+print(acc)

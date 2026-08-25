@@ -86,6 +86,22 @@ export function formatAt(title: string, message: string, span: Span | null, sour
 }
 
 /**
+ * Список синтаксических ошибок одним текстом. Одна ошибка печатается ровно так же,
+ * как печаталась бы поодиночке, — чтобы вывод не зависел от того, сколько их нашлось.
+ * Показывается не больше `limit`: дальше идут ошибки-последствия, а не причины.
+ */
+export function formatErrors(errors: DbgoError[], source: string, limit = 10): string {
+  const shown = errors.slice(0, limit);
+  const parts = shown.map((e) => formatError(e, source));
+  if (errors.length > shown.length) {
+    parts.push(`… и ещё ${errors.length - shown.length}; остальные видны после починки этих`);
+  } else if (errors.length > 1) {
+    parts.push(`Синтаксических ошибок: ${errors.length}`);
+  }
+  return parts.join('\n\n');
+}
+
+/**
  * Отчёт об ошибке для терминала: то же плюс стек вызовов.
  */
 export function formatError(err: DbgoError, source: string): string {

@@ -1,5 +1,5 @@
 import type { Expr, Param, Program, Stmt } from './ast.ts';
-import { parseError, type Span } from './errors.ts';
+import { DbgoError, parseError, type Span } from './errors.ts';
 import { Lexer } from './lexer.ts';
 import type { Token, TokenType } from './token.ts';
 
@@ -19,6 +19,8 @@ export class Parser {
   private file: string;
   /** Пока > 0, «{» после выражения читается как блок, а не как словарь. */
   private noMapLiteral = 0;
+  /** Накопленные синтаксические ошибки: разбор продолжается после каждой. */
+  private errors: DbgoError[] = [];
   /** Глубина вложенности блоков: import разрешён только на верхнем уровне. */
   private blockDepth = 0;
 
@@ -70,14 +72,74 @@ export class Parser {
 
   // ---- программа ----------------------------------------------------------
 
+  /** Разбор, останавливающийся на первой ошибке. */
   parse(): Program {
+    const { program, errors } = this.parseAll();
+    if (errors.length > 0) throw errors[0];
+    return program;
+  }
+
+  /**
+   * Разбор с продолжением после ошибки: собирает все синтаксические ошибки за один проход.
+   * Чинить файл по одной опечатке за запуск — самая дорогая часть работы с новым языком.
+   */
+  parseAll(): { program: Program; errors: DbgoError[] } {
     const stmts: Stmt[] = [];
     this.skipSeparators();
+
     while (!this.atEnd()) {
-      stmts.push(this.declaration());
+      // Лишняя «}» после ошибки — обломок блока, чьё начало уже не разобрать.
+      // Сообщать о ней отдельно значило бы плодить эхо первой ошибки.
+      if (this.check('RBRACE') && this.errors.length > 0) {
+        this.advance();
+        this.skipSeparators();
+        continue;
+      }
+
+      const before = this.pos;
+      try {
+        stmts.push(this.declaration());
+      } catch (e) {
+        if (!(e instanceof DbgoError) || e.stage !== 'parse') throw e;
+        this.report(e);
+        this.synchronize(before);
+      }
       this.skipSeparators();
     }
-    return stmts;
+
+    return { program: stmts, errors: this.errors };
+  }
+
+  /** Одна ошибка на позицию: иначе повторный разбор того же места даёт эхо. */
+  private report(err: DbgoError): void {
+    const last = this.errors[this.errors.length - 1];
+    if (last && last.span && err.span && last.span.line === err.span.line && last.span.col === err.span.col) {
+      return;
+    }
+    this.errors.push(err);
+  }
+
+  /**
+   * Дойти до начала следующей инструкции. Граница — перевод строки, «;»
+   * или слово, с которого инструкция может начаться.
+   */
+  private synchronize(before: number): void {
+    // Съесть хотя бы одну лексему обязательно: иначе разбор зациклится на том же месте.
+    if (this.pos === before && !this.atEnd()) this.advance();
+
+    while (!this.atEnd()) {
+      if (this.prev().type === 'NEWLINE' || this.prev().type === 'SEMI') return;
+      switch (this.peek().type) {
+        case 'LET': case 'CONST': case 'FN': case 'STRUCT': case 'IMPORT':
+        case 'IF': case 'WHILE': case 'FOR': case 'RETURN': case 'TRY':
+          return;
+        case 'RBRACE':
+          this.advance();
+          return;
+        default:
+          this.advance();
+      }
+    }
   }
 
   /** Разбор одного выражения — для вставок `${...}` в строках. */
@@ -619,4 +681,9 @@ export class Parser {
 
 export function parse(tokens: Token[], file = '<input>'): Program {
   return new Parser(tokens, file).parse();
+}
+
+/** Разбор, сообщающий обо всех синтаксических ошибках сразу. */
+export function parseAll(tokens: Token[], file = '<input>'): { program: Program; errors: DbgoError[] } {
+  return new Parser(tokens, file).parseAll();
 }

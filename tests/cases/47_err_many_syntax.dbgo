@@ -1,0 +1,12 @@
+fn первая(a b) { return a }
+
+let x = [1, 2
+
+fn вторая(n) {
+  if n > { return 1 }
+  return n
+}
+
+struct Точка { x, fn }
+
+print(x y)

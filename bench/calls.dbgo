@@ -1,0 +1,11 @@
+// Вызовы функций: новая область, привязка параметров, кадр стека, сигнал return.
+// ops: 600000
+fn add(a, b) { return a + b }
+fn triple(x) { return add(add(x, x), x) }
+let acc = 0
+let i = 0
+while i < 200000 {
+  acc = add(acc, triple(i))
+  i = i + 1
+}
+print(acc)

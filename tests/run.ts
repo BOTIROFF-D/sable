@@ -4,10 +4,10 @@
 import { readFileSync, readdirSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DbgoError, forgetSources, formatError, registerSource } from '../src/errors.ts';
+import { DbgoError, forgetSources, formatError, formatErrors, registerSource } from '../src/errors.ts';
 import { Interpreter } from '../src/interpreter.ts';
 import { tokenize } from '../src/lexer.ts';
-import { parse } from '../src/parser.ts';
+import { parseAll } from '../src/parser.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CASES = join(HERE, 'cases');
@@ -23,7 +23,10 @@ function runCase(source: string, file: string, fullPath: string): string {
   registerSource(file, source);
   const interp = new Interpreter({ write: (t) => { out += t; } }, fullPath);
   try {
-    interp.run(parse(tokenize(source, file), file));
+    // Разбор с продолжением после ошибки — ровно как в CLI: тест видит то же, что человек.
+    const parsed = parseAll(tokenize(source, file), file);
+    if (parsed.errors.length > 0) return out + formatErrors(parsed.errors, source) + '\n';
+    interp.run(parsed.program);
   } catch (e) {
     if (e instanceof DbgoError) out += formatError(e, source) + '\n';
     else out += `ВНУТРЕННЯЯ ОШИБКА: ${(e as Error).message}\n`;

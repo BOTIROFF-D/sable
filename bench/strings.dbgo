@@ -1,0 +1,17 @@
+// Строки: вставки ${...}, конкатенация, методы.
+// ops: 400000
+let acc = 0
+let i = 0
+while i < 100000 {
+  let s = "имя-${i}"
+  acc = acc + s.len()
+  i = i + 1
+}
+let parts = []
+let j = 0
+while j < 20000 {
+  parts.push("x${j}")
+  j = j + 1
+}
+let joined = parts.join(",")
+print(acc, joined.len(), joined.split(",").len())

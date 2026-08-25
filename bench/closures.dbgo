@@ -1,0 +1,14 @@
+// Замыкания: захват окружения и вызов через цепочку областей.
+// ops: 500000
+fn счётчик(шаг) {
+  let n = 0
+  return fn() { n += шаг; return n }
+}
+let inc = счётчик(1)
+let acc = 0
+let i = 0
+while i < 250000 {
+  acc = acc + inc()
+  i = i + 1
+}
+print(acc)

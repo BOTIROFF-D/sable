@@ -1,0 +1,17 @@
+// Списки: push, индексирование, методы стандартной библиотеки.
+// ops: 700000
+let xs = []
+let i = 0
+while i < 100000 {
+  xs.push(i % 1000)
+  i = i + 1
+}
+let acc = 0
+let j = 0
+while j < 100000 {
+  acc = acc + xs[j]
+  j = j + 1
+}
+let doubled = xs.map(x -> x * 2)
+let big = doubled.filter(x -> x > 1000)
+print(acc, doubled.len(), big.len())
