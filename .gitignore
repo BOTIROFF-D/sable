@@ -1,3 +1,4 @@
 node_modules/
 *.log
 tests/fuzz-findings/
+web/dist/

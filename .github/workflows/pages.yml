@@ -1,0 +1,53 @@
+# Публикация песочницы на GitHub Pages.
+#
+# Собранный воркер в репозиторий не коммитится: он собирается здесь и уходит
+# прямо в артефакт. Иначе в дереве лежал бы файл, который надо не забывать
+# пересобирать после каждой правки языка, — а забывают всегда.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      # Песочница собирается из того же кода, что и терминальная версия.
+      # Если язык сломан — сборка упадёт здесь, а не у посетителя.
+      - name: Собрать песочницу
+        run: npm run build:web
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -31,6 +31,9 @@ print(fib(20))
   A full rewrite of the interpreter core passed them without touching a single
   expected output.
 
+**[Try it in the browser](https://botiroff-d.github.io/sable/)** — no install, runs
+the same interpreter compiled for the web.
+
 ```bash
 node src/cli.ts examples/01_hello.sable   # run a file
 node src/cli.ts                           # interactive session
@@ -68,6 +71,9 @@ print("Самая длинная: ${longest.x}, ${longest.y} → ${round(longest
 Требуется Node 22.18+ или 24+ — с этих версий TypeScript исполняется нативно
 без флагов, поэтому компилировать нечего. Проверено прогоном всего набора
 тестов на 22.18, 24 и 25; на 22.17 и раньше не запустится.
+
+Попробовать, ничего не устанавливая, — **[песочница в браузере](https://botiroff-d.github.io/sable/)**:
+тот же интерпретатор, собранный под веб. Выполняет, форматирует и проверяет без запуска.
 
 ```bash
 node src/cli.ts examples/01_hello.sable   # выполнить файл

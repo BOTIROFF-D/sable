@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Песочница Sable</title>
+<meta name="description" content="Попробовать язык программирования Sable прямо в браузере: выполнить, отформатировать, проверить без запуска.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@500;600;700&display=swap">
+<style>
+  :root {
+    --ground:   #0D100C;
+    --panel:    #14170F;
+    --raise:    #1B2018;
+    --ink:      #E7EBE2;
+    --ink-soft: #B4BCAD;
+    --muted:    #8A9383;
+    --rule:     #262D22;
+    --accent:   #E0A64A;
+    --alarm:    #DC7960;
+    --ok:       #93B36A;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: "IBM Plex Sans", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 1.5rem clamp(1rem, 4vw, 2.25rem) 1.1rem;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 1.5rem;
+  }
+
+  h1 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+  h1 sup { font-size: 0.55em; font-weight: 500; color: var(--muted); }
+
+  .tagline { color: var(--ink-soft); font-size: 0.9rem; margin: 0; flex: 1 1 18rem; }
+
+  .links { display: flex; gap: 1.1rem; font-family: var(--mono); font-size: 0.78rem; }
+  a { color: var(--accent); text-underline-offset: 0.2em; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.85rem clamp(1rem, 4vw, 2.25rem);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  button, select {
+    font-family: var(--mono);
+    font-size: 0.79rem;
+    font-weight: 500;
+    color: var(--ink);
+    background: var(--raise);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.45rem 0.8rem;
+    cursor: pointer;
+  }
+  button:hover, select:hover { border-color: var(--muted); }
+  button:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #14170F; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+  button[disabled] { opacity: 0.5; cursor: default; }
+  select { padding-right: 1.6rem; }
+
+  .spacer { flex: 1; }
+  .shortcut { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 0;
+  }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+
+  .pane { display: flex; flex-direction: column; min-width: 0; min-height: 22rem; }
+  .pane + .pane { border-left: 1px solid var(--rule); }
+  @media (max-width: 820px) { .pane + .pane { border-left: 0; border-top: 1px solid var(--rule); } }
+
+  .pane-head {
+    font-family: var(--mono);
+    font-size: 0.71rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem clamp(1rem, 4vw, 2.25rem) 0.5rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+  .status { font-size: 0.71rem; letter-spacing: 0.04em; text-transform: none; }
+  .status.ok { color: var(--ok); }
+  .status.bad { color: var(--alarm); }
+  .status.busy { color: var(--accent); }
+
+  textarea, .out {
+    flex: 1;
+    margin: 0;
+    padding: 0.4rem clamp(1rem, 4vw, 2.25rem) 1.5rem;
+    background: transparent;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 0.83rem;
+    line-height: 1.62;
+    border: 0;
+    resize: none;
+    tab-size: 2;
+    overflow: auto;
+  }
+  textarea { white-space: pre; }
+  .out { white-space: pre-wrap; word-break: break-word; color: var(--ink-soft); }
+  .out.bad { color: var(--alarm); }
+
+  footer {
+    padding: 0.9rem clamp(1rem, 4vw, 2.25rem) 1.4rem;
+    border-top: 1px solid var(--rule);
+    font-size: 0.78rem;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+  footer b { color: var(--ink-soft); font-weight: 500; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Sable<sup>™</sup></h1>
+  <p class="tagline">Язык программирования. Выполняется прямо здесь — ставить ничего не нужно.</p>
+  <nav class="links">
+    <a href="https://github.com/BOTIROFF-D/sable">Репозиторий</a>
+    <a href="https://github.com/BOTIROFF-D/sable/blob/main/docs/TUTORIAL.md">Учебник</a>
+    <a href="https://github.com/BOTIROFF-D/sable/blob/main/docs/LANGUAGE.md">Справочник</a>
+  </nav>
+</header>
+
+<div class="bar">
+  <select id="examples" aria-label="Примеры"></select>
+  <button class="primary" id="run" type="button">Выполнить</button>
+  <button id="fmt" type="button">Отформатировать</button>
+  <button id="check" type="button">Проверить без запуска</button>
+  <div class="spacer"></div>
+  <span class="shortcut">Ctrl/⌘ + Enter — выполнить</span>
+</div>
+
+<main>
+  <section class="pane">
+    <div class="pane-head"><span>Программа</span></div>
+    <textarea id="code" spellcheck="false" aria-label="Код на Sable"></textarea>
+  </section>
+  <section class="pane">
+    <div class="pane-head"><span>Вывод</span><span class="status" id="status"></span></div>
+    <pre class="out" id="out">Нажмите «Выполнить».</pre>
+  </section>
+</main>
+
+<footer>
+  Песочница выполняет программу в отдельном потоке, поэтому бесконечный цикл её не вешает — он прерывается по времени.
+  <b>Чего здесь нет:</b> файловых функций <code>read_file</code> и <code>write_file</code>, ввода <code>input()</code> и модулей <code>import</code> — им нужна файловая система. Всё остальное работает так же, как в терминале.
+</footer>
+
+<script type="module">
+  const EXAMPLES = [
+    ['Привет', `let имя = "мир"\nprint("Привет, \${имя}!")\n\nfn поздравить(кого, чем = "днём рождения") {\n  return "\${кого}, с \${чем}!"\n}\nprint(поздравить("Sable"))`],
+    ['Структуры и методы', `struct Точка {\n  x = 0\n  y = 0\n  fn длина() { return sqrt(self.x ^ 2 + self.y ^ 2) }\n  fn плюс(другая) { return Точка(self.x + другая.x, self.y + другая.y) }\n}\n\nlet a = Точка(3, 4)\nprint(a, a.длина())\nprint(a.плюс(Точка(1, 1)))`],
+    ['Замыкания', `fn счётчик() {\n  let n = 0\n  return fn() { n += 1; return n }\n}\n\nlet следующий = счётчик()\nprint(следующий(), следующий(), следующий())\n\n// каждый виток цикла ловит своё значение\nlet фн = []\nfor i in 0..3 { фн.push(fn() -> i) }\nprint(фн.map(f -> f()))`],
+    ['Частота слов', `const ТЕКСТ = "мы строим язык мы пишем язык мы проверяем язык каждый день"\n\nfn частоты(текст) {\n  let счёт = {}\n  for слово in текст.split(" ") {\n    счёт.set(слово, счёт.get(слово, 0) + 1)\n  }\n  return счёт\n}\n\nlet ранг = частоты(ТЕКСТ).entries().sort((a, b) -> b[1] - a[1])\nfor пара in ранг {\n  print("  \${пара[0].pad_end(12, '.')} \${пара[1]}")\n}`],
+    ['Ошибка со стрелкой', `// Опечатка: «счетчик» без ё. Язык не просто ругается,\n// а показывает место и предлагает, что имелось в виду.\nlet счётчик = 0\n\nfn увеличить(на) {\n  return счетчик + на\n}\n\nprint(увеличить(1))`],
+    ['Перехват ошибок', `fn снять(баланс, сумма) {\n  if сумма > баланс { error("недостаточно средств: нужно \${сумма}, есть \${баланс}") }\n  return баланс - сумма\n}\n\nprint(снять(100, 30))\n\ntry {\n  print(снять(100, 500))\n} catch e {\n  print("не вышло:", e.message)\n}`],
+  ];
+
+  const code = document.getElementById('code');
+  const out = document.getElementById('out');
+  const status = document.getElementById('status');
+  const picker = document.getElementById('examples');
+  const buttons = ['run', 'fmt', 'check'].map((id) => document.getElementById(id));
+
+  for (const [name] of EXAMPLES) {
+    const option = document.createElement('option');
+    option.textContent = name;
+    picker.append(option);
+  }
+
+  const load = (i) => { code.value = EXAMPLES[i][1]; say('', ''); out.textContent = 'Нажмите «Выполнить».'; out.className = 'out'; };
+  picker.addEventListener('change', () => load(picker.selectedIndex));
+  load(0);
+
+  function say(text, kind) {
+    status.textContent = text;
+    status.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  // Поток пересоздаётся после каждого обрыва: убитый воркер продолжить нельзя.
+  let worker = null;
+  let timer = null;
+
+  function spawn() {
+    worker = new Worker(new URL('./dist/worker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = (event) => {
+      clearTimeout(timer);
+      const { ok, text, replaceSource } = event.data;
+      if (replaceSource !== undefined) code.value = replaceSource;
+      out.textContent = text;
+      out.className = 'out' + (ok ? '' : ' bad');
+      say(ok ? 'готово' : 'с ошибкой', ok ? 'ok' : 'bad');
+      busy(false);
+    };
+    worker.onerror = () => {
+      clearTimeout(timer);
+      out.textContent = 'Песочница не смогла запуститься. Обновите страницу.';
+      out.className = 'out bad';
+      say('сбой', 'bad');
+      busy(false);
+    };
+  }
+
+  function busy(on) { for (const b of buttons) b.disabled = on; }
+
+  function send(kind) {
+    if (worker === null) spawn();
+    busy(true);
+    say(kind === 'run' ? 'выполняется…' : 'считаю…', 'busy');
+    out.textContent = '';
+    out.className = 'out';
+
+    // Пять секунд — потолок. Дольше живут только зацикленные программы,
+    // а объяснить это понятнее, чем оставить вкладку висеть.
+    timer = setTimeout(() => {
+      worker.terminate();
+      worker = null;
+      out.textContent = 'Программа не уложилась в 5 секунд и была остановлена.\n\nСкорее всего, это бесконечный цикл: проверьте условие выхода.';
+      out.className = 'out bad';
+      say('остановлено', 'bad');
+      busy(false);
+    }, 5000);
+
+    worker.postMessage({ kind, source: code.value });
+  }
+
+  document.getElementById('run').addEventListener('click', () => send('run'));
+  document.getElementById('fmt').addEventListener('click', () => send('format'));
+  document.getElementById('check').addEventListener('click', () => send('check'));
+
+  code.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); send('run'); return; }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const { selectionStart: s, selectionEnd: t, value } = code;
+      code.value = value.slice(0, s) + '  ' + value.slice(t);
+      code.selectionStart = code.selectionEnd = s + 2;
+    }
+  });
+</script>
+</body>
+</html>
