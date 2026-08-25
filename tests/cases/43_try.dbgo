@@ -1,0 +1,54 @@
+// Перехват своих ошибок
+fn снять(баланс, сумма) {
+  if сумма > баланс { error("недостаточно средств: нужно ${сумма}, есть ${баланс}") }
+  return баланс - сумма
+}
+try { print(снять(100, 500)) } catch e { print("поймали:", e.message) }
+print(снять(100, 30))
+
+// У пойманного всегда есть message; value — то, что передали в error()
+try { error({ код: 404, текст: "не найдено" }) } catch e {
+  print(e.value.код, e.value.текст, type(e.value))
+}
+
+// Встроенные ошибки тоже ловятся, у них value = nil
+try { print([1, 2][99]) } catch e { print(e.message, "| value =", e.value) }
+try { print(1 / 0) } catch e { print(e.message) }
+try { print(неизвестное_имя) } catch e { print(e.message) }
+
+// Без ошибки catch не выполняется
+try { print("всё хорошо") } catch e { print("сюда не попадём") }
+
+// return, break и continue проходят сквозь try
+fn через_try() { try { return "вернулись из try" } catch e { return "из catch" } }
+print(через_try())
+
+let собрано = []
+for i in 0..5 {
+  try {
+    if i == 2 { continue }
+    if i == 4 { break }
+    собрано.push(i)
+  } catch e { print("не сюда") }
+}
+print(собрано)
+
+// Обработчик может не называть переменную
+try { error("молча") } catch { print("поймали без имени") }
+
+// Вложенные try и повторный бросок
+try {
+  try { error("внутренняя") } catch e { error("обёрнута: ${e.message}") }
+} catch outer { print(outer.message) }
+
+// catch с новой строки
+try {
+  error("перенос")
+}
+catch e {
+  print(e.message)
+}
+
+// Ошибка внутри вызванной функции ловится на верхнем уровне
+fn глубоко(n) { if n == 0 { error("дно") }; return глубоко(n - 1) }
+try { глубоко(3) } catch e { print("со дна:", e.message) }

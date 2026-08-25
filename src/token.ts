@@ -6,6 +6,7 @@ export type TokenType =
   // ключевые слова
   | 'LET' | 'CONST' | 'FN' | 'RETURN' | 'IF' | 'ELSE' | 'WHILE' | 'FOR' | 'IN'
   | 'BREAK' | 'CONTINUE' | 'TRUE' | 'FALSE' | 'NIL' | 'STRUCT' | 'IMPORT' | 'AS'
+  | 'TRY' | 'CATCH'
   // пунктуация
   | 'LPAREN' | 'RPAREN' | 'LBRACKET' | 'RBRACKET' | 'LBRACE' | 'RBRACE'
   | 'COMMA' | 'DOT' | 'COLON' | 'SEMI' | 'RANGE' | 'ARROW'
@@ -39,6 +40,7 @@ export const KEYWORDS: Record<string, TokenType> = {
   break: 'BREAK', continue: 'CONTINUE',
   true: 'TRUE', false: 'FALSE', nil: 'NIL',
   struct: 'STRUCT', import: 'IMPORT', as: 'AS',
+  try: 'TRY', catch: 'CATCH',
   // словесные синонимы логических операторов
   and: 'AND', or: 'OR', not: 'BANG',
 };

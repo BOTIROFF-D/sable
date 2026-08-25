@@ -149,6 +149,9 @@ export class Interpreter {
       case 'For':
         return this.executeFor(stmt);
 
+      case 'Try':
+        return this.executeTry(stmt);
+
       case 'Return':
         throw new ReturnSignal(stmt.value ? this.evaluate(stmt.value) : null);
 
@@ -157,6 +160,26 @@ export class Interpreter {
 
       case 'Continue':
         throw new ContinueSignal();
+    }
+  }
+
+  /**
+   * try/catch перехватывает только ошибки выполнения самой программы.
+   * Сигналы return/break/continue проходят насквозь: иначе `return` изнутри try
+   * перестал бы выходить из функции.
+   */
+  private executeTry(stmt: Extract<Stmt, { kind: 'Try' }>): void {
+    const depthBefore = this.stack.length;
+    try {
+      this.executeBlock(stmt.body, new Environment(this.env));
+      return;
+    } catch (e) {
+      if (!(e instanceof DbgoError) || e.stage !== 'runtime') throw e;
+      // Кадры вызовов, оборванных ошибкой, снимаем — обработчик выполняется на своём уровне.
+      this.stack.length = depthBefore;
+      const env = new Environment(this.env);
+      if (stmt.param) env.define(stmt.param, describeError(e), false);
+      this.executeBlock(stmt.handler, env);
     }
   }
 
@@ -585,6 +608,20 @@ export class Interpreter {
       span,
     );
   }
+}
+
+/**
+ * Ошибка как значение языка: у неё всегда есть `message`, а `value` хранит то,
+ * что передали в error(...) — иначе форма пойманного зависела бы от источника ошибки.
+ */
+function describeError(e: DbgoError): Value {
+  const map = new Map<MapKey, Value>();
+  map.set('message', e.message);
+  map.set('value', (e.payload ?? null) as Value);
+  map.set('file', e.span?.file ?? '');
+  map.set('line', e.span?.line ?? 0);
+  map.set('column', e.span?.col ?? 0);
+  return map;
 }
 
 /** Ближайшее по написанию имя — для подсказки «возможно, имелось в виду». */

@@ -215,6 +215,7 @@ export class Parser {
     if (this.check('IF')) return this.ifStmt();
     if (this.check('WHILE')) return this.whileStmt();
     if (this.check('FOR')) return this.forStmt();
+    if (this.check('TRY')) return this.tryStmt();
     if (this.check('RETURN')) return this.returnStmt();
     if (this.check('BREAK')) { const t = this.advance(); this.endStatement(); return { kind: 'Break', span: t.span }; }
     if (this.check('CONTINUE')) { const t = this.advance(); this.endStatement(); return { kind: 'Continue', span: t.span }; }
@@ -276,6 +277,22 @@ export class Parser {
       body: { kind: 'Block', body: this.block(), span },
       span: kw.span,
     };
+  }
+
+  private tryStmt(): Stmt {
+    const kw = this.advance();
+    const body = this.block();
+    // «}» и «catch» на разных строках — обычное форматирование.
+    const afterBody = this.pos;
+    this.skipSeparators();
+    if (!this.check('CATCH')) {
+      this.pos = afterBody;
+      throw parseError('после блока try обязателен «catch» — иначе ошибку некому обработать', kw.span);
+    }
+    this.advance();
+    const param = this.check('IDENT') ? String(this.advance().value) : null;
+    const handler = this.block();
+    return { kind: 'Try', body, param, handler, span: kw.span };
   }
 
   private returnStmt(): Stmt {

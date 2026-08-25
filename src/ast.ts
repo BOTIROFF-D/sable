@@ -32,6 +32,7 @@ export type Stmt =
   | { kind: 'If'; cond: Expr; then: Stmt; else: Stmt | null; span: Span }
   | { kind: 'While'; cond: Expr; body: Stmt; span: Span }
   | { kind: 'For'; name: string; iterable: Expr; body: Stmt; span: Span }
+  | { kind: 'Try'; body: Stmt[]; param: string | null; handler: Stmt[]; span: Span }
   | { kind: 'Return'; value: Expr | null; span: Span }
   | { kind: 'Break'; span: Span }
   | { kind: 'Continue'; span: Span };
