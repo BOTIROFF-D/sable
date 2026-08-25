@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { registerSource, runtimeError, shortPath, type Span } from './errors.ts';
-import { Environment } from './environment.ts';
 import type { Interpreter } from './interpreter.ts';
 import { tokenize } from './lexer.ts';
 import { parse } from './parser.ts';

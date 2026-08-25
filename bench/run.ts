@@ -140,7 +140,20 @@ function report(results: Result[], base: Baseline | null): void {
  * `evaluate` или `execute`, раздувает кадр JS и незаметно съедает этот запас.
  */
 function checkStackMargin(): boolean {
-  const source = 'fn d(n) { return d(n + 1) }\nd(0)\n';
+  // Функция намеренно тяжёлая: чем больше в теле вложенных выражений, структур
+  // и литералов, тем больше кадров JS уходит на один вызов dbgo. Тривиальная
+  // рекурсия проверяла бы самый лёгкий случай и пропустила бы регрессию.
+  const source = [
+    'struct Узел { знач, дальше = nil }',
+    'fn d(n, акк) {',
+    '  let м = { к: n, в: "${n}" }',
+    '  let сп = [n, n * 2, n + 1]',
+    '  let у = Узел(n)',
+    '  return d(n + 1, акк + (сп[0] + м.к + у.знач) * 1 - ((n * 2) - (n * 2)))',
+    '}',
+    'd(0, 0)',
+    '',
+  ].join('\n');
   const file = '<запас стека>';
   forgetSources();
   registerSource(file, source);

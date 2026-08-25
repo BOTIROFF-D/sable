@@ -1,30 +1,48 @@
-import type { Param, Stmt } from './ast.ts';
+import type { Param } from './ast.ts';
 import { runtimeError, type Span } from './errors.ts';
 import type { Environment } from './environment.ts';
 
 export type MapKey = string | number | boolean;
 
+/**
+ * Скомпилированная функция: тело и значения по умолчанию превращены в замыкания
+ * один раз на объявление, а не на каждое создание функции и не на каждый вызов.
+ */
+export type CompiledFn = {
+  /** Тело; возвращает код сигнала (0 — обычный ход, 1 — return, и так далее). */
+  run: (env: Environment) => number;
+  /** Значения по умолчанию по позициям параметров; null — параметр обязателен. */
+  defaults: Array<((env: Environment) => Value) | null>;
+};
+
 export class DbgoFunction {
   name: string | null;
   params: Param[];
-  body: Stmt[];
   closure: Environment;
   /** Для методов структуры — экземпляр, к которому метод привязан. */
   self: StructInstance | null;
   /** Сколько параметров без значения по умолчанию — считается один раз, а не на каждый вызов. */
   readonly required: number;
+  /** Общая на все экземпляры этой функции скомпилированная часть. */
+  readonly code: CompiledFn;
 
-  constructor(name: string | null, params: Param[], body: Stmt[], closure: Environment, self: StructInstance | null = null) {
+  constructor(
+    name: string | null,
+    params: Param[],
+    code: CompiledFn,
+    closure: Environment,
+    self: StructInstance | null = null,
+  ) {
     this.name = name;
     this.params = params;
-    this.body = body;
+    this.code = code;
     this.closure = closure;
     this.self = self;
     this.required = countRequired(params);
   }
 
   bind(self: StructInstance): DbgoFunction {
-    return new DbgoFunction(this.name, this.params, this.body, this.closure, self);
+    return new DbgoFunction(this.name, this.params, this.code, this.closure, self);
   }
 }
 
@@ -71,10 +89,19 @@ export class StructDef {
   /** Сколько полей обязательны — считается один раз, а не на каждое создание экземпляра. */
   readonly required: number;
 
-  constructor(name: string, fields: Param[], methods: Map<string, DbgoFunction>) {
+  /** Значения полей по умолчанию, скомпилированные один раз на объявление. */
+  fieldDefaults: Array<((env: Environment) => Value) | null>;
+
+  constructor(
+    name: string,
+    fields: Param[],
+    methods: Map<string, DbgoFunction>,
+    fieldDefaults: Array<((env: Environment) => Value) | null> = fields.map(() => null),
+  ) {
     this.name = name;
     this.fields = fields;
     this.methods = methods;
+    this.fieldDefaults = fieldDefaults;
     this.required = countRequired(fields);
   }
 }

@@ -6,6 +6,7 @@ import { ModuleLoader } from './modules.ts';
 import { findMethodEntry, getMethod, installGlobals, repeatText, type MethodEntry } from './stdlib.ts';
 import {
   DbgoModule, NativeFn, DbgoFunction, DbgoRange, StructDef, StructInstance,
+  type CompiledFn,
   asMapKey, charAt, charLength, equals, isCallable, repr, toStr, truthy, typeName,
   type MapKey, type Value,
 } from './values.ts';
@@ -23,6 +24,11 @@ const RETURN = 1;
 const BREAK = 2;
 const CONTINUE = 3;
 type Signal = 0 | 1 | 2 | 3;
+
+/** Скомпилированное выражение: даёт значение в переданной области видимости. */
+type ExprFn = (env: Environment) => Value;
+/** Скомпилированная инструкция: даёт код сигнала — обычный ход, return, break, continue. */
+type StmtFn = (env: Environment) => Signal;
 
 /**
  * `break`/`continue` внутри функции обрабатываются значением, но вырваться за
@@ -50,7 +56,6 @@ export class Interpreter {
   /** Встроенные имена. Отдельная область, чтобы `let sum = 0` затенял `sum`, а не падал. */
   builtins: Environment;
   globals: Environment;
-  private env: Environment;
   /**
    * Глубина вызовов. Раньше здесь лежал массив кадров, но содержимое кадров никто
    * не читал — в отчёт об ошибке имена попадают из `callValue`. Счётчик даёт то же
@@ -69,7 +74,6 @@ export class Interpreter {
   constructor(host: Host = { write: (t) => process.stdout.write(t) }, entryFile = join(process.cwd(), '<input>')) {
     this.builtins = new Environment(null, true);
     this.globals = new Environment(this.builtins);
-    this.env = this.globals;
     this.host = host;
     this.currentFile = entryFile;
     installGlobals(this);
@@ -85,20 +89,20 @@ export class Interpreter {
     this.currentFile = file;
     let sig: Signal;
     try {
-      sig = this.executeBlock(program, moduleEnv);
+      // Компиляция идёт при том же currentFile, что и выполнение: `import`
+      // внутри модуля считает путь от папки модуля, а не главного файла.
+      sig = this.compileBlock(program)(moduleEnv);
     } finally {
       this.currentFile = prevFile;
     }
-    if (sig !== NORMAL) throw escaped(sig);
+    if (sig !== NORMAL) throw escaped(sig, this.signalSpan);
     return moduleEnv.ownEntries();
   }
 
   run(program: Program): void {
     try {
-      for (const stmt of program) {
-        const sig = this.execute(stmt);
-        if (sig !== NORMAL) throw escaped(sig);
-      }
+      const sig = this.compileBlock(program)(this.globals);
+      if (sig !== NORMAL) throw escaped(sig, this.signalSpan);
     } catch (e) {
       throw this.decorate(e);
     }
@@ -109,10 +113,11 @@ export class Interpreter {
     let last: Value = null;
     try {
       for (const stmt of program) {
-        if (stmt.kind === 'ExprStmt') last = this.evaluate(stmt.expr);
-        else {
-          const sig = this.execute(stmt);
-          if (sig !== NORMAL) throw escaped(sig);
+        if (stmt.kind === 'ExprStmt') {
+          last = this.compileExpr(stmt.expr)(this.globals);
+        } else {
+          const sig = this.compileStmt(stmt)(this.globals);
+          if (sig !== NORMAL) throw escaped(sig, this.signalSpan);
           last = null;
         }
       }
@@ -136,74 +141,168 @@ export class Interpreter {
     return e;
   }
 
-  // ---- инструкции ---------------------------------------------------------
+  // ---- компиляция ---------------------------------------------------------
+  //
+  // Каждый узел дерева один раз превращается в замыкание. Раньше на каждое
+  // вычисление уходил разбор узла в switch; теперь разбор случается однажды,
+  // а в горячем цикле остаётся только вызов готовой функции.
 
-  private execute(stmt: Stmt): Signal {
+  private compileBlock(body: Stmt[]): StmtFn {
+    const fns: StmtFn[] = new Array(body.length);
+    for (let i = 0; i < body.length; i++) fns[i] = this.compileStmt(body[i]!);
+
+    if (fns.length === 0) return () => NORMAL;
+    if (fns.length === 1) return fns[0]!;
+    return (env) => {
+      for (let i = 0; i < fns.length; i++) {
+        const sig = fns[i]!(env);
+        if (sig !== NORMAL) return sig;
+      }
+      return NORMAL;
+    };
+  }
+
+  /** Тело функции и её значения по умолчанию — общие для всех её экземпляров. */
+  private compileFn(params: Param[], body: Stmt[]): CompiledFn {
+    const defaults: Array<ExprFn | null> = params.map((p) => (p.def ? this.compileExpr(p.def) : null));
+    return { run: this.compileBlock(body), defaults };
+  }
+
+  private compileStmt(stmt: Stmt): StmtFn {
     switch (stmt.kind) {
-      case 'ExprStmt':
-        this.evaluate(stmt.expr);
-        return NORMAL;
+      case 'ExprStmt': {
+        const value = this.compileExpr(stmt.expr);
+        return (env) => { value(env); return NORMAL; };
+      }
 
-      case 'VarDecl':
-        this.env.define(stmt.name, this.evaluate(stmt.init), stmt.mutable, stmt.span);
-        return NORMAL;
+      case 'VarDecl': {
+        const init = this.compileExpr(stmt.init);
+        const { name, mutable, span } = stmt;
+        return (env) => { env.define(name, init(env), mutable, span); return NORMAL; };
+      }
 
-      case 'If':
-        if (truthy(this.evaluate(stmt.cond))) return this.execute(stmt.then);
-        if (stmt.else) return this.execute(stmt.else);
-        return NORMAL;
+      case 'If': {
+        const cond = this.compileExpr(stmt.cond);
+        const then = this.compileStmt(stmt.then);
+        if (stmt.else === null) {
+          return (env) => (truthy(cond(env)) ? then(env) : NORMAL);
+        }
+        const alt = this.compileStmt(stmt.else);
+        return (env) => (truthy(cond(env)) ? then(env) : alt(env));
+      }
 
-      case 'Block':
-        return this.executeBlock(stmt.body, new Environment(this.env));
+      case 'Block': {
+        const body = this.compileBlock(stmt.body);
+        return (env) => body(new Environment(env));
+      }
 
-      case 'Return':
-        this.returnValue = stmt.value ? this.evaluate(stmt.value) : null;
-        return RETURN;
+      case 'Return': {
+        if (stmt.value === null) return () => { this.returnValue = null; return RETURN; };
+        const value = this.compileExpr(stmt.value);
+        return (env) => { this.returnValue = value(env); return RETURN; };
+      }
 
-      case 'While':
-        while (truthy(this.evaluate(stmt.cond))) {
-          const sig = this.execute(stmt.body);
+      case 'While': {
+        const cond = this.compileExpr(stmt.cond);
+        const body = this.compileStmt(stmt.body);
+        return (env) => {
+          while (truthy(cond(env))) {
+            const sig = body(env);
+            if (sig === BREAK) break;
+            if (sig === RETURN) return RETURN;
+          }
+          return NORMAL;
+        };
+      }
+
+      case 'For':
+        return this.compileFor(stmt);
+
+      case 'Try':
+        return this.compileTry(stmt);
+
+      case 'Break': {
+        const span = stmt.span;
+        return () => { this.signalSpan = span; return BREAK; };
+      }
+
+      case 'Continue': {
+        const span = stmt.span;
+        return () => { this.signalSpan = span; return CONTINUE; };
+      }
+
+      case 'FnDecl': {
+        const code = this.compileFn(stmt.params, stmt.body);
+        const { name, params, span } = stmt;
+        return (env) => {
+          env.define(name, new DbgoFunction(name, params, code, env), false, span);
+          return NORMAL;
+        };
+      }
+
+      case 'StructDecl': {
+        const { name, fields, span } = stmt;
+        const fieldDefaults: Array<ExprFn | null> = fields.map((f) => (f.def ? this.compileExpr(f.def) : null));
+        const methods = stmt.methods.map((m) => ({
+          name: m.name,
+          params: m.params,
+          code: this.compileFn(m.params, m.body),
+        }));
+        return (env) => {
+          const table = new Map<string, DbgoFunction>();
+          const def = new StructDef(name, fields, table, fieldDefaults);
+          for (const m of methods) {
+            table.set(m.name, new DbgoFunction(`${name}.${m.name}`, m.params, m.code, env));
+          }
+          env.define(name, def, false, span);
+          return NORMAL;
+        };
+      }
+
+      case 'Import': {
+        const { path, alias, span } = stmt;
+        return (env) => {
+          env.define(alias, this.modules.load(this, path, this.currentFile, alias, span), false, span);
+          return NORMAL;
+        };
+      }
+    }
+  }
+
+  private compileFor(stmt: Extract<Stmt, { kind: 'For' }>): StmtFn {
+    const iterable = this.compileExpr(stmt.iterable);
+    const body = this.compileBlock((stmt.body as Extract<Stmt, { kind: 'Block' }>).body);
+    const { name, span } = stmt;
+
+    // Своя область на каждый виток: замыкания внутри цикла ловят разные значения.
+    const step = (outer: Environment, item: Value): Signal => {
+      const env = new Environment(outer);
+      env.define(name, item, true);
+      return body(env);
+    };
+
+    return (env) => {
+      const seq = iterable(env);
+
+      // Диапазон перебирается счётчиком: ради `for i in 0..1000000` незачем
+      // сначала строить миллион элементов в памяти.
+      if (seq instanceof DbgoRange) {
+        for (let i = seq.start; i < seq.end; i++) {
+          const sig = step(env, i);
           if (sig === BREAK) break;
           if (sig === RETURN) return RETURN;
         }
         return NORMAL;
-
-      case 'For':
-        return this.executeFor(stmt);
-
-      case 'Try':
-        return this.executeTry(stmt);
-
-      case 'Break':
-        this.signalSpan = stmt.span;
-        return BREAK;
-
-      case 'Continue':
-        this.signalSpan = stmt.span;
-        return CONTINUE;
-
-      case 'FnDecl': {
-        const fn = new DbgoFunction(stmt.name, stmt.params, stmt.body, this.env);
-        this.env.define(stmt.name, fn, false, stmt.span);
-        return NORMAL;
       }
 
-      case 'StructDecl': {
-        const methods = new Map<string, DbgoFunction>();
-        const def = new StructDef(stmt.name, stmt.fields, methods);
-        for (const m of stmt.methods) {
-          methods.set(m.name, new DbgoFunction(`${stmt.name}.${m.name}`, m.params, m.body, this.env));
-        }
-        this.env.define(stmt.name, def, false, stmt.span);
-        return NORMAL;
+      const items = this.iterate(seq, span);
+      for (let k = 0; k < items.length; k++) {
+        const sig = step(env, items[k]!);
+        if (sig === BREAK) break;
+        if (sig === RETURN) return RETURN;
       }
-
-      case 'Import': {
-        const mod = this.modules.load(this, stmt.path, this.currentFile, stmt.alias, stmt.span);
-        this.env.define(stmt.alias, mod, false, stmt.span);
-        return NORMAL;
-      }
-    }
+      return NORMAL;
+    };
   }
 
   /**
@@ -211,71 +310,30 @@ export class Interpreter {
    * Сигналы return/break/continue проходят насквозь: иначе `return` изнутри try
    * перестал бы выходить из функции.
    */
-  private executeTry(stmt: Extract<Stmt, { kind: 'Try' }>): Signal {
-    const depthBefore = this.depth;
-    try {
-      return this.executeBlock(stmt.body, new Environment(this.env));
-    } catch (e) {
-      if (!(e instanceof DbgoError) || e.stage !== 'runtime') throw e;
-      // Кадры вызовов, оборванных ошибкой, снимаем — обработчик выполняется на своём уровне.
-      this.depth = depthBefore;
-      const env = new Environment(this.env);
-      if (stmt.param) env.define(stmt.param, describeError(e), false);
-      return this.executeBlock(stmt.handler, env);
-    }
-  }
+  private compileTry(stmt: Extract<Stmt, { kind: 'Try' }>): StmtFn {
+    const body = this.compileBlock(stmt.body);
+    const handler = this.compileBlock(stmt.handler);
+    const param = stmt.param;
 
-  executeBlock(body: Stmt[], env: Environment): Signal {
-    const prev = this.env;
-    this.env = env;
-    try {
-      for (let i = 0; i < body.length; i++) {
-        const sig = this.execute(body[i]!);
-        if (sig !== NORMAL) return sig;
+    return (env) => {
+      const depthBefore = this.depth;
+      try {
+        return body(new Environment(env));
+      } catch (e) {
+        if (!(e instanceof DbgoError) || e.stage !== 'runtime') throw e;
+        // Кадры вызовов, оборванных ошибкой, снимаем — обработчик выполняется на своём уровне.
+        this.depth = depthBefore;
+        const caught = new Environment(env);
+        if (param) caught.define(param, describeError(e), false);
+        return handler(caught);
       }
-      return NORMAL;
-    } finally {
-      this.env = prev;
-    }
-  }
-
-  private executeFor(stmt: Extract<Stmt, { kind: 'For' }>): Signal {
-    const seq = this.evaluate(stmt.iterable);
-    const body = (stmt.body as Extract<Stmt, { kind: 'Block' }>).body;
-    const name = stmt.name;
-
-    // Диапазон перебирается счётчиком: ради `for i in 0..1000000` незачем
-    // сначала строить миллион элементов в памяти.
-    if (seq instanceof DbgoRange) {
-      for (let i = seq.start; i < seq.end; i++) {
-        const sig = this.forStep(name, body, i);
-        if (sig === BREAK) break;
-        if (sig === RETURN) return RETURN;
-      }
-      return NORMAL;
-    }
-
-    const items = this.iterate(seq, stmt.span);
-    for (let k = 0; k < items.length; k++) {
-      const sig = this.forStep(name, body, items[k]!);
-      if (sig === BREAK) break;
-      if (sig === RETURN) return RETURN;
-    }
-    return NORMAL;
-  }
-
-  /** Один виток for: своя область, тело, разбор сигнала. */
-  private forStep(name: string, body: Stmt[], item: Value): Signal {
-    // Своя область на каждый виток: замыкания внутри цикла ловят разные значения.
-    const env = new Environment(this.env);
-    env.define(name, item, true);
-    return this.executeBlock(body, env);
+    };
   }
 
   /**
    * Что вообще можно перебрать в for. Список копируется: изменение исходного
    * списка внутри цикла не должно менять то, что цикл ещё пройдёт.
-   * Диапазон здесь тоже разворачивается, но `executeFor` до этого не доходит —
+   * Диапазон здесь тоже разворачивается, но цикл до этого не доходит —
    * он идёт по диапазону счётчиком.
    */
   iterate(seq: Value, span: Span): Value[] {
@@ -288,128 +346,180 @@ export class Interpreter {
 
   // ---- выражения ----------------------------------------------------------
 
-  // Порядок case здесь — по частоте, а не по алфавиту: switch по строке V8
-  // разворачивает в цепочку сравнений, поэтому самые ходовые узлы стоят первыми.
-  evaluate(expr: Expr): Value {
+  private compileExpr(expr: Expr): ExprFn {
     switch (expr.kind) {
-      case 'Ident':
-        return this.env.get(expr.name, expr.span);
-
-      case 'Number': return expr.value;
-
-      case 'Binary':
-        return this.binary(expr.op, this.evaluate(expr.left), this.evaluate(expr.right), expr.span);
-
-      case 'Call': {
-        const target = expr.callee;
-        // `значение.метод(...)` — самый частый вызов в коде. Идём напрямую к реализации,
-        // не создавая на каждое обращение объект-функцию, который живёт до конца вызова.
-        if (target.kind === 'Get') {
-          const obj = this.evaluate(target.object);
-          const entry = fastMethodOf(obj, target.name);
-          if (entry) {
-            const list = expr.args;
-            const args: Value[] = new Array(list.length);
-            for (let i = 0; i < list.length; i++) args[i] = this.evaluate(list[i]!);
-            this.checkArity(`${typeName(obj)}.${target.name}`, args.length, entry.min, entry.max, expr.span);
-            return entry.impl(obj as never, args, expr.span, this);
-          }
-          const bound = this.getMember(obj, target.name, target.span);
-          const list = expr.args;
-          const args: Value[] = new Array(list.length);
-          for (let i = 0; i < list.length; i++) args[i] = this.evaluate(list[i]!);
-          return this.callValue(bound, args, expr.span, target.name);
-        }
-
-        const callee = this.evaluate(target);
-        const list = expr.args;
-        const args: Value[] = new Array(list.length);
-        for (let i = 0; i < list.length; i++) args[i] = this.evaluate(list[i]!);
-        return this.callValue(callee, args, expr.span, this.calleeName(target));
+      case 'Ident': {
+        const { name, span } = expr;
+        return (env) => env.get(name, span);
       }
 
-      case 'Get':
-        return this.getMember(this.evaluate(expr.object), expr.name, expr.span);
+      case 'Number': {
+        const value = expr.value;
+        return () => value;
+      }
 
-      case 'Index':
-        return this.getIndex(this.evaluate(expr.object), this.evaluate(expr.index), expr.span);
+      case 'Str': {
+        const value = expr.value;
+        return () => value;
+      }
+
+      case 'Bool': {
+        const value = expr.value;
+        return () => value;
+      }
+
+      case 'Nil':
+        return () => null;
+
+      case 'Binary': {
+        const left = this.compileExpr(expr.left);
+        const right = this.compileExpr(expr.right);
+        const { op, span } = expr;
+        return (env) => this.binary(op, left(env), right(env), span);
+      }
+
+      case 'Call':
+        return this.compileCall(expr);
+
+      case 'Get': {
+        const object = this.compileExpr(expr.object);
+        const { name, span } = expr;
+        return (env) => this.getMember(object(env), name, span);
+      }
+
+      case 'Index': {
+        const object = this.compileExpr(expr.object);
+        const index = this.compileExpr(expr.index);
+        const span = expr.span;
+        return (env) => this.getIndex(object(env), index(env), span);
+      }
 
       case 'Assign':
-        return this.assign(expr);
+        return this.compileAssign(expr);
 
-      case 'Str': return expr.value;
-      case 'Bool': return expr.value;
-      case 'Nil': return null;
+      case 'Template': {
+        const parts = expr.parts.map((part) =>
+          'text' in part ? part.text : this.compileExpr(part.expr));
+        return (env) => {
+          let out = '';
+          for (let i = 0; i < parts.length; i++) {
+            const part = parts[i]!;
+            out += typeof part === 'string' ? part : toStr(part(env));
+          }
+          return out;
+        };
+      }
 
-      case 'Template': return this.template(expr);
-      case 'List': return this.listLiteral(expr);
-      case 'Map': return this.mapLiteral(expr);
+      case 'List': {
+        const items = expr.items.map((item) => this.compileExpr(item));
+        return (env) => {
+          const out: Value[] = new Array(items.length);
+          for (let i = 0; i < items.length; i++) out[i] = items[i]!(env);
+          return out;
+        };
+      }
 
-      case 'Fn':
-        return new DbgoFunction(expr.name, expr.params, expr.body, this.env);
+      case 'Map': {
+        const entries = expr.entries.map((e) => ({
+          key: this.compileExpr(e.key),
+          value: this.compileExpr(e.value),
+        }));
+        const span = expr.span;
+        return (env) => {
+          const map = new Map<MapKey, Value>();
+          for (let i = 0; i < entries.length; i++) {
+            const e = entries[i]!;
+            map.set(asMapKey(e.key(env), span), e.value(env));
+          }
+          return map;
+        };
+      }
 
-      case 'Range': return this.range(expr);
+      case 'Fn': {
+        const code = this.compileFn(expr.params, expr.body);
+        const { name, params } = expr;
+        return (env) => new DbgoFunction(name, params, code, env);
+      }
+
+      case 'Range': {
+        const start = this.compileExpr(expr.start);
+        const end = this.compileExpr(expr.end);
+        const span = expr.span;
+        return (env) => this.makeRange(start(env), end(env), span);
+      }
 
       case 'Unary': {
-        const right = this.evaluate(expr.right);
-        if (expr.op === '!') return !truthy(right);
-        return -this.numberOperand(right, 'операнд унарного минуса', expr.span);
+        const right = this.compileExpr(expr.right);
+        const span = expr.span;
+        if (expr.op === '!') return (env) => !truthy(right(env));
+        return (env) => -this.numberOperand(right(env), 'операнд унарного минуса', span);
       }
 
       case 'Logical': {
-        const left = this.evaluate(expr.left);
-        if (expr.op === '??') return left === null ? this.evaluate(expr.right) : left;
-        if (expr.op === '&&' || expr.op === 'and') return truthy(left) ? this.evaluate(expr.right) : left;
-        return truthy(left) ? left : this.evaluate(expr.right);
+        const left = this.compileExpr(expr.left);
+        const right = this.compileExpr(expr.right);
+        if (expr.op === '??') return (env) => { const l = left(env); return l === null ? right(env) : l; };
+        if (expr.op === '&&' || expr.op === 'and') {
+          return (env) => { const l = left(env); return truthy(l) ? right(env) : l; };
+        }
+        return (env) => { const l = left(env); return truthy(l) ? l : right(env); };
       }
 
-      case 'Ternary':
-        return truthy(this.evaluate(expr.cond)) ? this.evaluate(expr.then) : this.evaluate(expr.else);
-
+      case 'Ternary': {
+        const cond = this.compileExpr(expr.cond);
+        const then = this.compileExpr(expr.then);
+        const alt = this.compileExpr(expr.else);
+        return (env) => (truthy(cond(env)) ? then(env) : alt(env));
+      }
     }
   }
 
-  private template(expr: Extract<Expr, { kind: 'Template' }>): string {
-    const parts = expr.parts;
-    let out = '';
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i]!;
-      // Кусок текста или вставка — различаются наличием поля. Проверка поля,
-      // а не оператор «in»: тот на разнотипных объектах заметно дороже.
-      const text = (part as { text?: string }).text;
-      out += text !== undefined ? text : toStr(this.evaluate((part as { expr: Expr }).expr));
+  private compileCall(expr: Extract<Expr, { kind: 'Call' }>): ExprFn {
+    const args = expr.args.map((a) => this.compileExpr(a));
+    const span = expr.span;
+    const evalArgs = (env: Environment): Value[] => {
+      const out: Value[] = new Array(args.length);
+      for (let i = 0; i < args.length; i++) out[i] = args[i]!(env);
+      return out;
+    };
+
+    // `значение.метод(...)` — самый частый вызов в коде. Идём напрямую к реализации,
+    // не создавая на каждое обращение объект-функцию, который живёт до конца вызова.
+    const target = expr.callee;
+    if (target.kind === 'Get') {
+      const object = this.compileExpr(target.object);
+      const name = target.name;
+      const memberSpan = target.span;
+      return (env) => {
+        const obj = object(env);
+        const entry = fastMethodOf(obj, name);
+        if (entry) {
+          const values = evalArgs(env);
+          this.checkArity(`${typeName(obj)}.${name}`, values.length, entry.min, entry.max, span);
+          return entry.impl(obj as never, values, span, this);
+        }
+        return this.callValue(this.getMember(obj, name, memberSpan), evalArgs(env), span, name);
+      };
     }
-    return out;
+
+    const callee = this.compileExpr(target);
+    const shown = this.calleeName(target);
+    return (env) => this.callValue(callee(env), evalArgs(env), span, shown);
   }
 
-  private listLiteral(expr: Extract<Expr, { kind: 'List' }>): Value[] {
-    const items = expr.items;
-    const out: Value[] = new Array(items.length);
-    for (let i = 0; i < items.length; i++) out[i] = this.evaluate(items[i]!);
-    return out;
-  }
-
-  private mapLiteral(expr: Extract<Expr, { kind: 'Map' }>): Map<MapKey, Value> {
-    const map = new Map<MapKey, Value>();
-    for (const { key, value } of expr.entries) {
-      map.set(asMapKey(this.evaluate(key), expr.span), this.evaluate(value));
-    }
-    return map;
-  }
-
-  private range(expr: Extract<Expr, { kind: 'Range' }>): DbgoRange {
-    const start = this.numberOperand(this.evaluate(expr.start), 'начало диапазона', expr.span);
-    const end = this.numberOperand(this.evaluate(expr.end), 'конец диапазона', expr.span);
+  private makeRange(startValue: Value, endValue: Value, span: Span): DbgoRange {
+    const start = this.numberOperand(startValue, 'начало диапазона', span);
+    const end = this.numberOperand(endValue, 'конец диапазона', span);
     // За пределом точных целых прибавление единицы перестаёт двигать счётчик:
     // такой цикл не закончится не «когда-нибудь», а никогда. Бесконечность — тот же случай.
     if (!Number.isFinite(start) || !Number.isFinite(end)) {
-      throw runtimeError('границы диапазона должны быть обычными числами', expr.span);
+      throw runtimeError('границы диапазона должны быть обычными числами', span);
     }
     if (Math.abs(start) > Number.MAX_SAFE_INTEGER || Math.abs(end) > Number.MAX_SAFE_INTEGER) {
       throw runtimeError(
         `границы диапазона больше ${Number.MAX_SAFE_INTEGER} — за этим пределом ` +
         'счётчик перестаёт расти, и цикл не закончится никогда',
-        expr.span,
+        span,
       );
     }
     return new DbgoRange(start, end);
@@ -421,68 +531,84 @@ export class Interpreter {
     return 'анонимная функция';
   }
 
-  private assign(expr: Extract<Expr, { kind: 'Assign' }>): Value {
+  /**
+   * Части цели вычисляются ровно один раз. Разворот «a[i] += v» в
+   * «a[i] = a[i] + v» считал бы i дважды: при побочном эффекте в индексе
+   * читали бы одну ячейку, а писали в другую.
+   */
+  private compileAssign(expr: Extract<Expr, { kind: 'Assign' }>): ExprFn {
     const target = expr.target;
     const op = expr.op;
+    const value = this.compileExpr(expr.value);
+    const span = expr.span;
 
-    // Части цели вычисляются ровно один раз. Раньше «a[i] += v» разворачивалось
-    // парсером в «a[i] = a[i] + v», и i считался дважды: при побочном эффекте
-    // в индексе читали одну ячейку, а писали в другую.
     if (target.kind === 'Ident') {
-      const value = op === null
-        ? this.evaluate(expr.value)
-        : this.binary(op, this.env.get(target.name, target.span), this.evaluate(expr.value), expr.span);
-      this.env.assign(target.name, value, expr.span);
-      return value;
+      const { name, span: nameSpan } = target;
+      if (op === null) {
+        return (env) => { const v = value(env); env.assign(name, v, span); return v; };
+      }
+      return (env) => {
+        const v = this.binary(op, env.get(name, nameSpan), value(env), span);
+        env.assign(name, v, span);
+        return v;
+      };
     }
 
     if (target.kind === 'Get') {
-      const obj = this.evaluate(target.object);
-      const value = op === null
-        ? this.evaluate(expr.value)
-        : this.binary(op, this.getMember(obj, target.name, target.span), this.evaluate(expr.value), expr.span);
+      const object = this.compileExpr(target.object);
+      const { name, span: nameSpan } = target;
+      return (env) => {
+        const obj = object(env);
+        const v = op === null
+          ? value(env)
+          : this.binary(op, this.getMember(obj, name, nameSpan), value(env), span);
 
-      if (obj instanceof DbgoModule) {
-        throw runtimeError(`имена модуля «${obj.alias}» менять нельзя`, expr.span);
-      }
-      if (obj instanceof StructInstance) {
-        if (!obj.fields.has(target.name)) {
-          throw runtimeError(`у ${obj.def.name} нет поля «${target.name}»`, expr.span);
+        if (obj instanceof DbgoModule) {
+          throw runtimeError(`имена модуля «${obj.alias}» менять нельзя`, span);
         }
-        obj.fields.set(target.name, value);
-        return value;
-      }
-      if (obj instanceof Map) {
-        obj.set(target.name, value);
-        return value;
-      }
-      throw runtimeError(`нельзя присвоить поле «${target.name}» значению типа ${typeName(obj)}`, expr.span);
+        if (obj instanceof StructInstance) {
+          if (!obj.fields.has(name)) {
+            throw runtimeError(`у ${obj.def.name} нет поля «${name}»`, span);
+          }
+          obj.fields.set(name, v);
+          return v;
+        }
+        if (obj instanceof Map) {
+          obj.set(name, v);
+          return v;
+        }
+        throw runtimeError(`нельзя присвоить поле «${name}» значению типа ${typeName(obj)}`, span);
+      };
     }
 
     if (target.kind !== 'Index') {
-      throw runtimeError('присваивать можно только переменной, полю или элементу', expr.span);
+      return () => { throw runtimeError('присваивать можно только переменной, полю или элементу', span); };
     }
 
-    const obj = this.evaluate(target.object);
-    const key = this.evaluate(target.index);
-    const value = op === null
-      ? this.evaluate(expr.value)
-      : this.binary(op, this.getIndex(obj, key, target.span), this.evaluate(expr.value), expr.span);
+    const object = this.compileExpr(target.object);
+    const index = this.compileExpr(target.index);
+    const indexSpan = target.span;
+    return (env) => {
+      const obj = object(env);
+      const key = index(env);
+      const v = op === null
+        ? value(env)
+        : this.binary(op, this.getIndex(obj, key, indexSpan), value(env), span);
 
-    if (Array.isArray(obj)) {
-      obj[this.listIndex(obj, key, expr.span)] = value;
-      return value;
-    }
-    if (obj instanceof Map) {
-      obj.set(asMapKey(key, expr.span), value);
-      return value;
-    }
-    if (typeof obj === 'string') {
-      throw runtimeError('строки неизменяемы — соберите новую строку вместо записи по индексу', expr.span);
-    }
-    throw runtimeError(`нельзя присвоить по индексу значению типа ${typeName(obj)}`, expr.span);
+      if (Array.isArray(obj)) {
+        obj[this.listIndex(obj, key, span)] = v;
+        return v;
+      }
+      if (obj instanceof Map) {
+        obj.set(asMapKey(key, span), v);
+        return v;
+      }
+      if (typeof obj === 'string') {
+        throw runtimeError('строки неизменяемы — соберите новую строку вместо записи по индексу', span);
+      }
+      throw runtimeError(`нельзя присвоить по индексу значению типа ${typeName(obj)}`, span);
+    };
   }
-
   // ---- операции -----------------------------------------------------------
 
   private numberOperand(v: Value, what: string, span: Span): number {
@@ -708,11 +834,11 @@ export class Interpreter {
 
     const env = new Environment(fn.closure);
     if (fn.self) env.define('self', fn.self, false);
-    this.bindParams(fn.params, args, env);
+    this.bindParams(fn.params, fn.code.defaults, args, env);
 
     this.depth++;
     try {
-      const sig = this.executeBlock(fn.body, env);
+      const sig = fn.code.run(env) as Signal;
       if (sig === RETURN) {
         const value = this.returnValue;
         this.returnValue = null; // не держим значение живым дольше нужного
@@ -733,23 +859,19 @@ export class Interpreter {
     }
   }
 
-  private bindParams(params: Param[], args: Value[], env: Environment): void {
+  private bindParams(
+    params: Param[],
+    defaults: Array<ExprFn | null>,
+    args: Value[],
+    env: Environment,
+  ): void {
     const n = args.length;
     for (let i = 0; i < params.length; i++) {
       const p = params[i]!;
       // Значение по умолчанию вычисляется в области вызова — оно может ссылаться на другие параметры.
-      const value = i < n ? args[i]! : p.def ? this.evaluateIn(p.def, env) : null;
+      const fallback = defaults[i];
+      const value = i < n ? args[i]! : fallback ? fallback(env) : null;
       env.define(p.name, value, true);
-    }
-  }
-
-  private evaluateIn(expr: Expr, env: Environment): Value {
-    const prev = this.env;
-    this.env = env;
-    try {
-      return this.evaluate(expr);
-    } finally {
-      this.env = prev;
     }
   }
 
@@ -763,7 +885,8 @@ export class Interpreter {
     const env = n < list.length ? new Environment(this.globals) : null;
     for (let i = 0; i < list.length; i++) {
       const f = list[i]!;
-      const value = i < n ? args[i]! : f.def ? this.evaluateIn(f.def, env!) : null;
+      const fallback = def.fieldDefaults[i];
+      const value = i < n ? args[i]! : fallback ? fallback(env!) : null;
       fields.set(f.name, value);
       if (env) env.define(f.name, value, true);
     }
