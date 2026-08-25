@@ -774,6 +774,24 @@ const TABLES: Array<[(v: Value) => boolean, MethodTable]> = [
   [(v) => v instanceof DbgoRange, RANGE_METHODS],
 ];
 
+export type MethodEntry = {
+  min: number;
+  max: number;
+  impl: (self: never, args: Value[], span: Span, interp: Interpreter) => Value;
+};
+
+/**
+ * Реализация метода встроенного типа — без создания объекта-функции.
+ * Нужна для `значение.метод(...)`: там результат «привязки» живёт ровно
+ * до вызова, и выделять под него объект незачем.
+ */
+export function findMethodEntry(obj: Value, name: string): MethodEntry | null {
+  for (const [matches, table] of TABLES) {
+    if (matches(obj)) return table[name] ?? null;
+  }
+  return null;
+}
+
 /** Метод встроенного типа, привязанный к своему значению. Null — если такого метода нет. */
 export function getMethod(interp: Interpreter, obj: Value, name: string, span: Span): NativeFn | null {
   for (const [matches, table] of TABLES) {

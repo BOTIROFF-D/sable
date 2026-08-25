@@ -3,17 +3,33 @@ import type { Expr, Param, Program, Stmt } from './ast.ts';
 import { DbgoError, runtimeError, type Span } from './errors.ts';
 import { Environment } from './environment.ts';
 import { ModuleLoader } from './modules.ts';
-import { getMethod, installGlobals } from './stdlib.ts';
+import { findMethodEntry, getMethod, installGlobals, type MethodEntry } from './stdlib.ts';
 import {
   DbgoModule, NativeFn, DbgoFunction, DbgoRange, StructDef, StructInstance,
-  asMapKey, equals, isCallable, repr, toStr, truthy, typeName,
+  asMapKey, charAt, charLength, equals, isCallable, repr, toStr, truthy, typeName,
   type MapKey, type Value,
 } from './values.ts';
 
-// Управляющие сигналы: дешевле и проще, чем протаскивать флаги через каждый узел.
-class ReturnSignal { value: Value; constructor(v: Value) { this.value = v; } }
-class BreakSignal {}
-class ContinueSignal {}
+/**
+ * Управляющие сигналы. `execute` возвращает их значением, а не бросает исключением:
+ * бросок в V8 стоит ~200 нс, и на программе с 500 тысячами `return` это половина
+ * всего времени вызовов (замер bench/calls). Возвращаемое число не стоит ничего.
+ *
+ * Значение `return` кладётся в `returnValue`: сигнал остаётся числом без выделения
+ * объекта, а прочитать значение успевает тот же вызов, который увидел RETURN.
+ */
+const NORMAL = 0;
+const RETURN = 1;
+const BREAK = 2;
+const CONTINUE = 3;
+type Signal = 0 | 1 | 2 | 3;
+
+/**
+ * `break`/`continue` внутри функции обрабатываются значением, но вырваться за
+ * границу вызова значением они не могут — вызов сидит внутри выражения. Такой
+ * (странный, но давний) случай по-прежнему летит исключением: `fn f() { break }`,
+ * позванная из цикла, прерывает цикл вызывающего.
+ */
 
 /**
  * Предел глубины вызовов. Стоит заметно ниже реального стека Node (~1100 вызовов dbgo),
@@ -32,9 +48,18 @@ export class Interpreter {
   builtins: Environment;
   globals: Environment;
   private env: Environment;
-  private stack: Array<{ name: string; span: Span }> = [];
+  /**
+   * Глубина вызовов. Раньше здесь лежал массив кадров, но содержимое кадров никто
+   * не читал — в отчёт об ошибке имена попадают из `callValue`. Счётчик даёт то же
+   * самое без выделения объекта на каждый вызов.
+   */
+  private depth = 0;
+  /** Значение последнего `return` — читается сразу после сигнала RETURN. */
+  private returnValue: Value = null;
   host: Host;
   private modules = new ModuleLoader();
+  /** Позиция последнего break/continue — нужна, если он вырвался туда, где цикла нет. */
+  private signalSpan: Span | null = null;
   /** Абсолютный путь к файлу, который выполняется сейчас — от него считаются пути import. */
   private currentFile: string;
 
@@ -55,17 +80,22 @@ export class Interpreter {
     const moduleEnv = new Environment(this.globals);
     const prevFile = this.currentFile;
     this.currentFile = file;
+    let sig: Signal;
     try {
-      this.executeBlock(program, moduleEnv);
+      sig = this.executeBlock(program, moduleEnv);
     } finally {
       this.currentFile = prevFile;
     }
+    if (sig !== NORMAL) throw escaped(sig);
     return moduleEnv.ownEntries();
   }
 
   run(program: Program): void {
     try {
-      for (const stmt of program) this.execute(stmt);
+      for (const stmt of program) {
+        const sig = this.execute(stmt);
+        if (sig !== NORMAL) throw escaped(sig);
+      }
     } catch (e) {
       throw this.decorate(e);
     }
@@ -77,7 +107,11 @@ export class Interpreter {
     try {
       for (const stmt of program) {
         if (stmt.kind === 'ExprStmt') last = this.evaluate(stmt.expr);
-        else { this.execute(stmt); last = null; }
+        else {
+          const sig = this.execute(stmt);
+          if (sig !== NORMAL) throw escaped(sig);
+          last = null;
+        }
       }
     } catch (e) {
       throw this.decorate(e);
@@ -85,37 +119,62 @@ export class Interpreter {
     return last;
   }
 
-  /** Сигналы, вырвавшиеся наружу, — это ошибки исходника, а не сбой рантайма. */
+  /** Срыв стека JS — не сбой рантайма, а слишком глубокое выражение в программе. */
   private decorate(e: unknown): unknown {
-    if (e instanceof ReturnSignal) return runtimeError('«return» вне функции');
-    if (e instanceof BreakSignal) return runtimeError('«break» вне цикла');
-    if (e instanceof ContinueSignal) return runtimeError('«continue» вне цикла');
     if (e instanceof RangeError) return runtimeError('слишком глубокая вложенность вычислений');
     return e;
   }
 
   // ---- инструкции ---------------------------------------------------------
 
-  private execute(stmt: Stmt): void {
+  private execute(stmt: Stmt): Signal {
     switch (stmt.kind) {
-      case 'Import': {
-        const mod = this.modules.load(this, stmt.path, this.currentFile, stmt.alias, stmt.span);
-        this.env.define(stmt.alias, mod, false, stmt.span);
-        return;
-      }
-
       case 'ExprStmt':
         this.evaluate(stmt.expr);
-        return;
+        return NORMAL;
 
       case 'VarDecl':
         this.env.define(stmt.name, this.evaluate(stmt.init), stmt.mutable, stmt.span);
-        return;
+        return NORMAL;
+
+      case 'If':
+        if (truthy(this.evaluate(stmt.cond))) return this.execute(stmt.then);
+        if (stmt.else) return this.execute(stmt.else);
+        return NORMAL;
+
+      case 'Block':
+        return this.executeBlock(stmt.body, new Environment(this.env));
+
+      case 'Return':
+        this.returnValue = stmt.value ? this.evaluate(stmt.value) : null;
+        return RETURN;
+
+      case 'While':
+        while (truthy(this.evaluate(stmt.cond))) {
+          const sig = this.execute(stmt.body);
+          if (sig === BREAK) break;
+          if (sig === RETURN) return RETURN;
+        }
+        return NORMAL;
+
+      case 'For':
+        return this.executeFor(stmt);
+
+      case 'Try':
+        return this.executeTry(stmt);
+
+      case 'Break':
+        this.signalSpan = stmt.span;
+        return BREAK;
+
+      case 'Continue':
+        this.signalSpan = stmt.span;
+        return CONTINUE;
 
       case 'FnDecl': {
         const fn = new DbgoFunction(stmt.name, stmt.params, stmt.body, this.env);
         this.env.define(stmt.name, fn, false, stmt.span);
-        return;
+        return NORMAL;
       }
 
       case 'StructDecl': {
@@ -125,44 +184,14 @@ export class Interpreter {
           methods.set(m.name, new DbgoFunction(`${stmt.name}.${m.name}`, m.params, m.body, this.env));
         }
         this.env.define(stmt.name, def, false, stmt.span);
-        return;
+        return NORMAL;
       }
 
-      case 'Block':
-        this.executeBlock(stmt.body, new Environment(this.env));
-        return;
-
-      case 'If':
-        if (truthy(this.evaluate(stmt.cond))) this.execute(stmt.then);
-        else if (stmt.else) this.execute(stmt.else);
-        return;
-
-      case 'While':
-        while (truthy(this.evaluate(stmt.cond))) {
-          try {
-            this.execute(stmt.body);
-          } catch (e) {
-            if (e instanceof BreakSignal) break;
-            if (e instanceof ContinueSignal) continue;
-            throw e;
-          }
-        }
-        return;
-
-      case 'For':
-        return this.executeFor(stmt);
-
-      case 'Try':
-        return this.executeTry(stmt);
-
-      case 'Return':
-        throw new ReturnSignal(stmt.value ? this.evaluate(stmt.value) : null);
-
-      case 'Break':
-        throw new BreakSignal();
-
-      case 'Continue':
-        throw new ContinueSignal();
+      case 'Import': {
+        const mod = this.modules.load(this, stmt.path, this.currentFile, stmt.alias, stmt.span);
+        this.env.define(stmt.alias, mod, false, stmt.span);
+        return NORMAL;
+      }
     }
   }
 
@@ -171,50 +200,74 @@ export class Interpreter {
    * Сигналы return/break/continue проходят насквозь: иначе `return` изнутри try
    * перестал бы выходить из функции.
    */
-  private executeTry(stmt: Extract<Stmt, { kind: 'Try' }>): void {
-    const depthBefore = this.stack.length;
+  private executeTry(stmt: Extract<Stmt, { kind: 'Try' }>): Signal {
+    const depthBefore = this.depth;
     try {
-      this.executeBlock(stmt.body, new Environment(this.env));
-      return;
+      return this.executeBlock(stmt.body, new Environment(this.env));
     } catch (e) {
       if (!(e instanceof DbgoError) || e.stage !== 'runtime') throw e;
       // Кадры вызовов, оборванных ошибкой, снимаем — обработчик выполняется на своём уровне.
-      this.stack.length = depthBefore;
+      this.depth = depthBefore;
       const env = new Environment(this.env);
       if (stmt.param) env.define(stmt.param, describeError(e), false);
-      this.executeBlock(stmt.handler, env);
+      return this.executeBlock(stmt.handler, env);
     }
   }
 
-  executeBlock(body: Stmt[], env: Environment): void {
+  executeBlock(body: Stmt[], env: Environment): Signal {
     const prev = this.env;
     this.env = env;
     try {
-      for (const stmt of body) this.execute(stmt);
+      for (let i = 0; i < body.length; i++) {
+        const sig = this.execute(body[i]!);
+        if (sig !== NORMAL) return sig;
+      }
+      return NORMAL;
     } finally {
       this.env = prev;
     }
   }
 
-  private executeFor(stmt: Extract<Stmt, { kind: 'For' }>): void {
+  private executeFor(stmt: Extract<Stmt, { kind: 'For' }>): Signal {
     const seq = this.evaluate(stmt.iterable);
-    const items = this.iterate(seq, stmt.span);
-    for (const item of items) {
-      // Своя область на каждый виток: замыкания внутри цикла ловят разные значения.
-      const env = new Environment(this.env);
-      env.define(stmt.name, item, true);
-      try {
-        this.executeBlock((stmt.body as Extract<Stmt, { kind: 'Block' }>).body, env);
-      } catch (e) {
-        if (e instanceof BreakSignal) break;
-        if (e instanceof ContinueSignal) continue;
-        throw e;
+    const body = (stmt.body as Extract<Stmt, { kind: 'Block' }>).body;
+    const name = stmt.name;
+
+    // Диапазон перебирается счётчиком: ради `for i in 0..1000000` незачем
+    // сначала строить миллион элементов в памяти.
+    if (seq instanceof DbgoRange) {
+      for (let i = seq.start; i < seq.end; i++) {
+        const sig = this.forStep(name, body, i);
+        if (sig === BREAK) break;
+        if (sig === RETURN) return RETURN;
       }
+      return NORMAL;
     }
+
+    const items = this.iterate(seq, stmt.span);
+    for (let k = 0; k < items.length; k++) {
+      const sig = this.forStep(name, body, items[k]!);
+      if (sig === BREAK) break;
+      if (sig === RETURN) return RETURN;
+    }
+    return NORMAL;
   }
 
-  /** Что вообще можно перебрать в for. */
-  iterate(seq: Value, span: Span): Iterable<Value> {
+  /** Один виток for: своя область, тело, разбор сигнала. */
+  private forStep(name: string, body: Stmt[], item: Value): Signal {
+    // Своя область на каждый виток: замыкания внутри цикла ловят разные значения.
+    const env = new Environment(this.env);
+    env.define(name, item, true);
+    return this.executeBlock(body, env);
+  }
+
+  /**
+   * Что вообще можно перебрать в for. Список копируется: изменение исходного
+   * списка внутри цикла не должно менять то, что цикл ещё пройдёт.
+   * Диапазон здесь тоже разворачивается, но `executeFor` до этого не доходит —
+   * он идёт по диапазону счётчиком.
+   */
+  iterate(seq: Value, span: Span): Value[] {
     if (Array.isArray(seq)) return [...seq];
     if (seq instanceof DbgoRange) return seq.toList();
     if (typeof seq === 'string') return [...seq];
@@ -224,43 +277,67 @@ export class Interpreter {
 
   // ---- выражения ----------------------------------------------------------
 
+  // Порядок case здесь — по частоте, а не по алфавиту: switch по строке V8
+  // разворачивает в цепочку сравнений, поэтому самые ходовые узлы стоят первыми.
   evaluate(expr: Expr): Value {
     switch (expr.kind) {
+      case 'Ident':
+        return this.env.get(expr.name, expr.span);
+
       case 'Number': return expr.value;
+
+      case 'Binary':
+        return this.binary(expr.op, this.evaluate(expr.left), this.evaluate(expr.right), expr.span);
+
+      case 'Call': {
+        const target = expr.callee;
+        // `значение.метод(...)` — самый частый вызов в коде. Идём напрямую к реализации,
+        // не создавая на каждое обращение объект-функцию, который живёт до конца вызова.
+        if (target.kind === 'Get') {
+          const obj = this.evaluate(target.object);
+          const entry = fastMethodOf(obj, target.name);
+          if (entry) {
+            const list = expr.args;
+            const args: Value[] = new Array(list.length);
+            for (let i = 0; i < list.length; i++) args[i] = this.evaluate(list[i]!);
+            this.checkArity(`${typeName(obj)}.${target.name}`, args.length, entry.min, entry.max, expr.span);
+            return entry.impl(obj as never, args, expr.span, this);
+          }
+          const bound = this.getMember(obj, target.name, target.span);
+          const list = expr.args;
+          const args: Value[] = new Array(list.length);
+          for (let i = 0; i < list.length; i++) args[i] = this.evaluate(list[i]!);
+          return this.callValue(bound, args, expr.span, target.name);
+        }
+
+        const callee = this.evaluate(target);
+        const list = expr.args;
+        const args: Value[] = new Array(list.length);
+        for (let i = 0; i < list.length; i++) args[i] = this.evaluate(list[i]!);
+        return this.callValue(callee, args, expr.span, this.calleeName(target));
+      }
+
+      case 'Get':
+        return this.getMember(this.evaluate(expr.object), expr.name, expr.span);
+
+      case 'Index':
+        return this.getIndex(this.evaluate(expr.object), this.evaluate(expr.index), expr.span);
+
+      case 'Assign':
+        return this.assign(expr);
+
       case 'Str': return expr.value;
       case 'Bool': return expr.value;
       case 'Nil': return null;
 
-      case 'Template': {
-        let out = '';
-        for (const part of expr.parts) {
-          out += 'text' in part ? part.text : toStr(this.evaluate(part.expr));
-        }
-        return out;
-      }
-
-      case 'List':
-        return expr.items.map((i) => this.evaluate(i));
-
-      case 'Map': {
-        const map = new Map<MapKey, Value>();
-        for (const { key, value } of expr.entries) {
-          map.set(asMapKey(this.evaluate(key), expr.span), this.evaluate(value));
-        }
-        return map;
-      }
-
-      case 'Ident':
-        return this.env.get(expr.name, expr.span);
+      case 'Template': return this.template(expr);
+      case 'List': return this.listLiteral(expr);
+      case 'Map': return this.mapLiteral(expr);
 
       case 'Fn':
         return new DbgoFunction(expr.name, expr.params, expr.body, this.env);
 
-      case 'Range': {
-        const start = this.numberOperand(this.evaluate(expr.start), 'начало диапазона', expr.span);
-        const end = this.numberOperand(this.evaluate(expr.end), 'конец диапазона', expr.span);
-        return new DbgoRange(start, end);
-      }
+      case 'Range': return this.range(expr);
 
       case 'Unary': {
         const right = this.evaluate(expr.right);
@@ -278,24 +355,41 @@ export class Interpreter {
       case 'Ternary':
         return truthy(this.evaluate(expr.cond)) ? this.evaluate(expr.then) : this.evaluate(expr.else);
 
-      case 'Binary':
-        return this.binary(expr.op, this.evaluate(expr.left), this.evaluate(expr.right), expr.span);
-
-      case 'Get':
-        return this.getMember(this.evaluate(expr.object), expr.name, expr.span);
-
-      case 'Index':
-        return this.getIndex(this.evaluate(expr.object), this.evaluate(expr.index), expr.span);
-
-      case 'Call': {
-        const callee = this.evaluate(expr.callee);
-        const args = expr.args.map((a) => this.evaluate(a));
-        return this.callValue(callee, args, expr.span, this.calleeName(expr.callee));
-      }
-
-      case 'Assign':
-        return this.assign(expr);
     }
+  }
+
+  private template(expr: Extract<Expr, { kind: 'Template' }>): string {
+    const parts = expr.parts;
+    let out = '';
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]!;
+      // Кусок текста или вставка — различаются наличием поля. Проверка поля,
+      // а не оператор «in»: тот на разнотипных объектах заметно дороже.
+      const text = (part as { text?: string }).text;
+      out += text !== undefined ? text : toStr(this.evaluate((part as { expr: Expr }).expr));
+    }
+    return out;
+  }
+
+  private listLiteral(expr: Extract<Expr, { kind: 'List' }>): Value[] {
+    const items = expr.items;
+    const out: Value[] = new Array(items.length);
+    for (let i = 0; i < items.length; i++) out[i] = this.evaluate(items[i]!);
+    return out;
+  }
+
+  private mapLiteral(expr: Extract<Expr, { kind: 'Map' }>): Map<MapKey, Value> {
+    const map = new Map<MapKey, Value>();
+    for (const { key, value } of expr.entries) {
+      map.set(asMapKey(this.evaluate(key), expr.span), this.evaluate(value));
+    }
+    return map;
+  }
+
+  private range(expr: Extract<Expr, { kind: 'Range' }>): DbgoRange {
+    const start = this.numberOperand(this.evaluate(expr.start), 'начало диапазона', expr.span);
+    const end = this.numberOperand(this.evaluate(expr.end), 'конец диапазона', expr.span);
+    return new DbgoRange(start, end);
   }
 
   private calleeName(callee: Expr): string {
@@ -361,6 +455,29 @@ export class Interpreter {
   }
 
   private binary(op: string, l: Value, r: Value, span: Span): Value {
+    // Два числа — самый частый случай в любой программе. Разбираем его сразу,
+    // не проходя разбор типов для строк, списков и структур.
+    if (typeof l === 'number' && typeof r === 'number') {
+      switch (op) {
+        case '+': return l + r;
+        case '-': return l - r;
+        case '*': return l * r;
+        case '<': return l < r;
+        case '<=': return l <= r;
+        case '>': return l > r;
+        case '>=': return l >= r;
+        case '==': return l === r;
+        case '!=': return l !== r;
+        case '^': return l ** r;
+        case '/':
+          if (r === 0) throw runtimeError('деление на ноль', span);
+          return l / r;
+        case '%':
+          if (r === 0) throw runtimeError('остаток от деления на ноль', span);
+          return l % r;
+      }
+    }
+
     switch (op) {
       case '==': return equals(l, r);
       case '!=': return !equals(l, r);
@@ -436,33 +553,30 @@ export class Interpreter {
       throw runtimeError(`нельзя обратиться к «${name}» у nil — проверьте значение или используйте «??»`, span);
     }
 
-    if (obj instanceof DbgoModule) {
-      if (obj.exports.has(name)) return obj.exports.get(name)!;
-      const near = nearest(name, [...obj.exports.keys()]);
-      throw runtimeError(
-        `в модуле «${obj.alias}» нет имени «${name}»${near ? ` — возможно, имелось в виду «${near}»` : ''}`,
-        span,
-      );
-    }
-
-    if (obj instanceof DbgoModule) {
-      if (obj.exports.has(name)) return obj.exports.get(name)!;
-      const near = nearest(name, [...obj.exports.keys()]);
-      throw runtimeError(
-        `в модуле «${obj.alias}» нет имени «${name}»${near ? ` — возможно, имелось в виду «${near}»` : ''}`,
-        span,
-      );
-    }
-
     if (obj instanceof StructInstance) {
-      if (obj.fields.has(name)) return obj.fields.get(name)!;
+      // Значений undefined в языке нет, поэтому один поиск заменяет пару has + get.
+      const field = obj.fields.get(name);
+      if (field !== undefined) return field;
       const m = obj.def.methods.get(name);
       if (m) return m.bind(obj);
       throw runtimeError(`у ${obj.def.name} нет поля или метода «${name}»`, span);
     }
 
-    // У словаря данные важнее методов: user.name должен работать всегда.
-    if (obj instanceof Map && obj.has(name)) return obj.get(name)!;
+    if (obj instanceof Map) {
+      // У словаря данные важнее методов: user.name должен работать всегда.
+      const held = obj.get(name);
+      if (held !== undefined) return held;
+    }
+
+    if (obj instanceof DbgoModule) {
+      const exported = obj.exports.get(name);
+      if (exported !== undefined) return exported;
+      const near = nearest(name, [...obj.exports.keys()]);
+      throw runtimeError(
+        `в модуле «${obj.alias}» нет имени «${name}»${near ? ` — возможно, имелось в виду «${near}»` : ''}`,
+        span,
+      );
+    }
 
     const method = getMethod(this, obj, name, span);
     if (method) return method;
@@ -489,21 +603,20 @@ export class Interpreter {
     if (Array.isArray(obj)) return obj[this.listIndex(obj, key, span)]!;
 
     if (typeof obj === 'string') {
-      const chars = [...obj];
       if (typeof key !== 'number' || !Number.isInteger(key)) {
         throw runtimeError(`индекс строки должен быть целым числом, а получен ${typeName(key)}`, span);
       }
-      const i = key < 0 ? chars.length + key : key;
-      if (i < 0 || i >= chars.length) {
-        throw runtimeError(`индекс ${key} вне строки длиной ${chars.length}`, span);
-      }
-      return chars[i]!;
+      const ch = charAt(obj, key);
+      if (ch === null) throw runtimeError(`индекс ${key} вне строки длиной ${charLength(obj)}`, span);
+      return ch;
     }
 
     if (obj instanceof Map) {
       const k = asMapKey(key, span);
-      if (!obj.has(k)) throw runtimeError(`в словаре нет ключа ${repr(k as Value)}`, span);
-      return obj.get(k)!;
+      // Значений undefined в языке нет, поэтому один поиск заменяет пару has + get.
+      const held = obj.get(k);
+      if (held === undefined) throw runtimeError(`в словаре нет ключа ${repr(k as Value)}`, span);
+      return held;
     }
 
     if (obj instanceof DbgoRange) {
@@ -541,10 +654,9 @@ export class Interpreter {
     if (callee instanceof StructDef) return this.construct(callee, args, span);
 
     const fn = callee as DbgoFunction;
-    const required = fn.params.filter((p) => p.def === null).length;
-    this.checkArity(fn.name ?? name, args.length, required, fn.params.length, span);
+    this.checkArity(fn.name ?? name, args.length, fn.required, fn.params.length, span);
 
-    if (this.stack.length >= MAX_DEPTH) {
+    if (this.depth >= MAX_DEPTH) {
       throw runtimeError(
         `слишком глубокая рекурсия: больше ${MAX_DEPTH} вложенных вызовов — ` +
         'проверьте условие выхода или перепишите цикл без рекурсии',
@@ -556,28 +668,37 @@ export class Interpreter {
     if (fn.self) env.define('self', fn.self, false);
     this.bindParams(fn.params, args, env);
 
-    this.stack.push({ name: fn.name ?? 'анонимная функция', span });
+    this.depth++;
     try {
-      this.executeBlock(fn.body, env);
+      const sig = this.executeBlock(fn.body, env);
+      if (sig === RETURN) {
+        const value = this.returnValue;
+        this.returnValue = null; // не держим значение живым дольше нужного
+        return value;
+      }
+      // Граница вызова сигнал не пропускает: цикл вызывающего — не «свой» цикл.
+      // Раньше break изнутри функции молча прерывал цикл, из которого её позвали,
+      // и статическая проверка спорила с рантаймом. Теперь оба говорят одно.
+      if (sig !== NORMAL) throw escaped(sig, this.signalSpan);
       return null;
     } catch (e) {
-      if (e instanceof ReturnSignal) return e.value;
       if (e instanceof DbgoError && e.stage === 'runtime' && e.trace.length < 12) {
         e.trace.push({ name: fn.name ?? 'анонимная функция', span });
       }
       throw e;
     } finally {
-      this.stack.pop();
+      this.depth--;
     }
   }
 
   private bindParams(params: Param[], args: Value[], env: Environment): void {
-    params.forEach((p, i) => {
-      const given = i < args.length ? args[i]! : null;
+    const n = args.length;
+    for (let i = 0; i < params.length; i++) {
+      const p = params[i]!;
       // Значение по умолчанию вычисляется в области вызова — оно может ссылаться на другие параметры.
-      const value = i < args.length ? given : p.def ? this.evaluateIn(p.def, env) : null;
+      const value = i < n ? args[i]! : p.def ? this.evaluateIn(p.def, env) : null;
       env.define(p.name, value, true);
-    });
+    }
   }
 
   private evaluateIn(expr: Expr, env: Environment): Value {
@@ -591,19 +712,23 @@ export class Interpreter {
   }
 
   private construct(def: StructDef, args: Value[], span: Span): Value {
-    const required = def.fields.filter((f) => f.def === null).length;
-    this.checkArity(def.name, args.length, required, def.fields.length, span);
+    const list = def.fields;
+    const n = args.length;
+    this.checkArity(def.name, n, def.required, list.length, span);
     const fields = new Map<string, Value>();
-    const env = new Environment(this.globals);
-    def.fields.forEach((f, i) => {
-      const value = i < args.length ? args[i]! : f.def ? this.evaluateIn(f.def, env) : null;
+    // Область нужна только значениям по умолчанию: они видят уже посчитанные поля.
+    // Если аргументов хватило на все поля, ни одно из них не вычисляется.
+    const env = n < list.length ? new Environment(this.globals) : null;
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i]!;
+      const value = i < n ? args[i]! : f.def ? this.evaluateIn(f.def, env!) : null;
       fields.set(f.name, value);
-      env.define(f.name, value, true);
-    });
+      if (env) env.define(f.name, value, true);
+    }
     return new StructInstance(def, fields);
   }
 
-  private checkArity(name: string, got: number, min: number, max: number, span: Span): void {
+  checkArity(name: string, got: number, min: number, max: number, span: Span): void {
     if (got >= min && got <= max) return;
     const need = min === max ? `${min}`
       : max === Infinity ? `хотя бы ${min}`
@@ -613,6 +738,16 @@ export class Interpreter {
       span,
     );
   }
+}
+
+/** Сигнал, дошедший до верха программы, — ошибка исходника. */
+function escaped(sig: Signal, span: Span | null = null): unknown {
+  if (sig === RETURN) return runtimeError('«return» вне функции', span);
+  const word = sig === BREAK ? 'break' : 'continue';
+  return runtimeError(
+    `«${word}» вне цикла — из функции нельзя прервать цикл, который её вызвал`,
+    span,
+  );
 }
 
 /**
@@ -627,6 +762,17 @@ function describeError(e: DbgoError): Value {
   map.set('line', e.span?.line ?? 0);
   map.set('column', e.span?.col ?? 0);
   return map;
+}
+
+/**
+ * Метод встроенного типа, к которому можно обратиться напрямую.
+ * Структуры, модули и словари сюда не попадают: у них свои правила поиска
+ * имени (у словаря данные важнее методов), и ломать их ради скорости нельзя.
+ */
+function fastMethodOf(obj: Value, name: string): MethodEntry | null {
+  if (obj instanceof StructInstance || obj instanceof DbgoModule || obj instanceof StructDef) return null;
+  if (obj instanceof Map && obj.has(name)) return null;
+  return findMethodEntry(obj, name);
 }
 
 /** Ближайшее по написанию имя — для подсказки «возможно, имелось в виду». */

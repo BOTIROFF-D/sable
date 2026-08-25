@@ -1,0 +1,14 @@
+// Обращение к символам строки по индексу и разбор строки посимвольно.
+// ops: 300000
+const s = "abcdefghij" * 30
+let acc = 0
+let r = 0
+while r < 1000 {
+  let i = 0
+  while i < 300 {
+    if s[i] == "e" { acc = acc + 1 }
+    i = i + 1
+  }
+  r = r + 1
+}
+print(acc, s.len())

@@ -128,6 +128,38 @@ function report(results: Result[], base: Baseline | null): void {
   }
 }
 
+// ---- запас стека ----------------------------------------------------------
+
+/**
+ * Проверка, которую не делают golden-тесты, а стоило бы: хватает ли стека JS
+ * на объявленный предел рекурсии. Собственный предел (900 вызовов) должен
+ * срабатывать раньше срыва стека Node — иначе вместо понятного сообщения
+ * пользователь получит «слишком глубокая вложенность вычислений».
+ *
+ * Ловушка здесь тонкая: любая правка интерпретатора, добавившая переменных в
+ * `evaluate` или `execute`, раздувает кадр JS и незаметно съедает этот запас.
+ */
+function checkStackMargin(): boolean {
+  const source = 'fn d(n) { return d(n + 1) }\nd(0)\n';
+  const file = '<запас стека>';
+  forgetSources();
+  registerSource(file, source);
+  let message = '';
+  try {
+    new Interpreter({ write: () => {} }, file).run(parse(tokenize(source, file), file));
+  } catch (e) {
+    message = e instanceof DbgoError ? e.message : String(e);
+  }
+  const ok = message.startsWith('слишком глубокая рекурсия');
+  process.stdout.write(
+    ok
+      ? '\nзапас стека: свой предел рекурсии срабатывает раньше стека Node — порядок\n'
+      : `\nЗАПАС СТЕКА ИСЧЕРПАН: вместо своего предела получено «${message}».\n` +
+        'Кадр evaluate/execute вырос — вынесите редкие ветки switch в отдельные методы.\n',
+  );
+  return ok;
+}
+
 // ---- запуск ---------------------------------------------------------------
 
 const files = readdirSync(HERE)
@@ -159,6 +191,8 @@ for (const file of files) {
 process.stderr.write(' '.repeat(40) + '\r');
 
 report(results, base);
+
+if (!checkStackMargin()) process.exitCode = 1;
 
 if (save) {
   const out: Baseline = {

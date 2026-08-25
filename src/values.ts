@@ -11,6 +11,8 @@ export class DbgoFunction {
   closure: Environment;
   /** Для методов структуры — экземпляр, к которому метод привязан. */
   self: StructInstance | null;
+  /** Сколько параметров без значения по умолчанию — считается один раз, а не на каждый вызов. */
+  readonly required: number;
 
   constructor(name: string | null, params: Param[], body: Stmt[], closure: Environment, self: StructInstance | null = null) {
     this.name = name;
@@ -18,6 +20,7 @@ export class DbgoFunction {
     this.body = body;
     this.closure = closure;
     this.self = self;
+    this.required = countRequired(params);
   }
 
   bind(self: StructInstance): DbgoFunction {
@@ -65,12 +68,22 @@ export class StructDef {
   name: string;
   fields: Param[];
   methods: Map<string, DbgoFunction>;
+  /** Сколько полей обязательны — считается один раз, а не на каждое создание экземпляра. */
+  readonly required: number;
 
   constructor(name: string, fields: Param[], methods: Map<string, DbgoFunction>) {
     this.name = name;
     this.fields = fields;
     this.methods = methods;
+    this.required = countRequired(fields);
   }
+}
+
+/** Параметры без значения по умолчанию — обязательные. */
+function countRequired(params: Param[]): number {
+  let n = 0;
+  for (let i = 0; i < params.length; i++) if (params[i]!.def === null) n++;
+  return n;
 }
 
 export class DbgoModule {
@@ -154,6 +167,48 @@ export function equals(a: Value, b: Value): boolean {
 export function asMapKey(v: Value, span: Span): MapKey {
   if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v;
   throw runtimeError(`ключом словаря может быть строка, число или bool, а не ${typeName(v)}`, span);
+}
+
+// ---- строка по символам ---------------------------------------------------
+//
+// Длина и индексы строки считаются в символах (кодовых точках), а не в кодовых
+// единицах UTF-16: len("😀") == 1. Прямой способ — [...s] — режет всю строку на
+// каждое обращение, то есть s[i] в цикле превращается в O(n²) с выделением
+// памяти на каждом шаге. Функции ниже делают то же самое проходом по кодовым
+// единицам: без выделения памяти и не дальше нужного места.
+
+/** Стоит ли в позиции i суррогатная пара — то есть занимает ли символ две кодовые единицы. */
+function isPair(s: string, i: number): boolean {
+  const hi = s.charCodeAt(i);
+  if (hi < 0xd800 || hi > 0xdbff || i + 1 >= s.length) return false;
+  const lo = s.charCodeAt(i + 1);
+  return lo >= 0xdc00 && lo <= 0xdfff;
+}
+
+/** Длина строки в символах. */
+export function charLength(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i += isPair(s, i) ? 2 : 1) n++;
+  return n;
+}
+
+/**
+ * Символ по индексу в символах; отрицательный индекс считается с конца.
+ * null — индекс вне строки (о длине для сообщения спросит вызывающий).
+ */
+export function charAt(s: string, index: number): string | null {
+  let want = index;
+  if (want < 0) {
+    want += charLength(s);
+    if (want < 0) return null;
+  }
+  let seen = 0;
+  for (let i = 0; i < s.length; seen++) {
+    const wide = isPair(s, i);
+    if (seen === want) return wide ? s.slice(i, i + 2) : s[i]!;
+    i += wide ? 2 : 1;
+  }
+  return null;
 }
 
 // ---- печать ---------------------------------------------------------------
