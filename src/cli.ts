@@ -10,7 +10,7 @@ import { parse } from './parser.ts';
 import { repr, type Value } from './values.ts';
 
 export const LANG = 'dbgo';
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 export const EXT = '.dbgo';
 
 /** Разбор + выполнение одного исходника. Ошибки уходят наверх как DbgoError. */

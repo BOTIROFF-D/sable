@@ -1,6 +1,6 @@
 {
   "name": "dbgo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "dbgo — учебно-боевой язык программирования: лексер, парсер, tree-walking интерпретатор",
   "type": "module",
   "bin": {
