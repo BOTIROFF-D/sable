@@ -1,6 +1,50 @@
 # Sable
 
-Язык программирования общего назначения: лексер → парсер → AST → интерпретатор дерева.
+**English** · [Русский](#о-языке)
+
+A general-purpose programming language whose interpreter compiles the AST to
+closures. Written in TypeScript, runs on Node with no build step and zero runtime
+dependencies — `node src/cli.ts file.sable` is the whole toolchain.
+
+```sable
+fn fib(n) { if n < 2 { return n }; return fib(n - 1) + fib(n - 2) }
+print(fib(20))
+```
+
+```text
+6765
+```
+
+- **Nothing to install.** Node executes the TypeScript sources natively; `tsc` is
+  used for type checking only, and the runtime pulls in no packages at all.
+- **Diagnostics meant to be read.** Every error carries a position, the source line
+  with a caret under the culprit, a call stack, and a suggestion when a name looks
+  like a typo. All syntax errors are reported in a single pass.
+- **Tooling in the box.** A formatter (`sable fmt`), a static checker that runs
+  without executing the program (`sable --check`), a VS Code syntax grammar, and
+  two fuzzers that shrink any failure they find down to a few lines.
+- **440 checks in five independent suites** — including the exact text of every
+  error message, every example program, and every code block in the documentation.
+  A full rewrite of the interpreter core passed them without touching a single
+  expected output.
+
+```bash
+node src/cli.ts examples/01_hello.sable   # run a file
+node src/cli.ts                           # interactive session
+node src/cli.ts --check file.sable        # analyse without running
+npm test                                  # all five suites
+```
+
+> The reference, the tutorial and all diagnostics are written in Russian.
+> Start at [docs/TUTORIAL.md](docs/TUTORIAL.md), the full reference is
+> [docs/LANGUAGE.md](docs/LANGUAGE.md), the internals are in
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+---
+
+## О языке
+
+Язык программирования общего назначения: лексер → парсер → AST → компиляция в замыкания.
 Написан на TypeScript, работает на Node без сборки и без единой зависимости в рантайме.
 
 ```sable
@@ -79,7 +123,7 @@ $ sable pay.sable
 src/
   lexer.ts        текст          → лексемы
   parser.ts       лексемы        → AST          (рекурсивный спуск)
-  interpreter.ts  AST            → выполнение   (обход дерева)
+  interpreter.ts  AST            → замыкания    (компиляция и выполнение)
   checker.ts      AST            → замечания    (проверка без запуска)
   modules.ts      загрузка import: кэш, циклы, пути
   values.ts       значения времени выполнения, равенство, печать
