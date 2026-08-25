@@ -9,8 +9,9 @@
   "scripts": {
     "dbgo": "node src/cli.ts",
     "repl": "node src/cli.ts",
-    "test": "node tests/run.ts && node tests/checker.ts && node tests/docs.ts && node tests/grammar.ts",
+    "test": "node tests/run.ts && node tests/checker.ts && node tests/docs.ts && node tests/grammar.ts && node tests/format.ts",
     "check": "node src/cli.ts --check",
+    "fmt": "node src/cli.ts fmt",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

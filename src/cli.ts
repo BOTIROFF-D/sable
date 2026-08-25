@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { check } from './checker.ts';
+import { format } from './format.ts';
 import { DbgoError, formatAt, formatError, formatErrors, registerSource, shortPath } from './errors.ts';
 import { Interpreter } from './interpreter.ts';
 import { tokenize } from './lexer.ts';
@@ -82,6 +83,68 @@ function checkFile(path: string): number {
   }
   process.stdout.write(`${file}: ошибок — ${errors}, замечаний — ${warnings}\n`);
   return errors > 0 ? 65 : 0;
+}
+
+/**
+ * Форматирование. Три режима: печать в вывод, запись на место (-w) и проверка (-c),
+ * последняя нужна в сборке — она ничего не меняет, но краснеет на неотформатированном.
+ */
+function formatFiles(args: string[]): number {
+  const write = args.includes('-w') || args.includes('--write');
+  const verify = args.includes('-c') || args.includes('--check');
+  const paths = args.filter((a) => !a.startsWith('-'));
+
+  if (paths.length === 0) {
+    process.stderr.write(`после «fmt» нужен путь к файлу${EXT}\n`);
+    return 64;
+  }
+  if (write && verify) {
+    process.stderr.write('«-w» и «-c» вместе не имеют смысла: одно пишет, другое только проверяет\n');
+    return 64;
+  }
+
+  let changed = 0;
+  for (const path of paths) {
+    const loaded = loadProgram(path);
+    if (typeof loaded === 'number') return loaded;
+    const { source, file, full } = loaded;
+
+    let result: string;
+    try {
+      result = format(source, file);
+    } catch (e) {
+      if (e instanceof DbgoError) {
+        process.stderr.write(formatError(e, source) + '\n');
+        process.stderr.write(`${file}: не отформатирован — сначала почините синтаксис\n`);
+        return 65;
+      }
+      throw e;
+    }
+
+    if (verify) {
+      if (result !== source) {
+        changed++;
+        process.stdout.write(`${file}: не отформатирован\n`);
+      }
+      continue;
+    }
+    if (write) {
+      if (result !== source) {
+        writeFileSync(full, result, 'utf8');
+        changed++;
+        process.stdout.write(`${file}: отформатирован\n`);
+      }
+      continue;
+    }
+    process.stdout.write(result);
+  }
+
+  if (verify) {
+    if (changed === 0) process.stdout.write(`отформатировано: все ${paths.length}\n`);
+    return changed === 0 ? 0 : 1;
+  }
+  if (write && changed === 0) process.stdout.write('всё уже отформатировано\n');
+  return 0;
 }
 
 function runFile(path: string): number {
@@ -295,6 +358,9 @@ const HELP_ROWS: Array<[string, string]> = [
   ['dbgo', 'интерактивный режим (REPL)'],
   ['dbgo -e "<код>"', 'выполнить строку кода'],
   [`dbgo --check <файл${EXT}>`, 'проверить, не запуская'],
+  [`dbgo fmt <файл${EXT}>`, 'привести к каноническому виду'],
+  ['dbgo fmt -w <файлы>', 'то же, записав на место'],
+  ['dbgo fmt -c <файлы>', 'только проверить оформление (для сборки)'],
   ['dbgo --version', 'версия'],
   ['dbgo --help', 'эта справка'],
 ];
@@ -317,6 +383,8 @@ async function main(): Promise<number> {
   if (args.length === 0) return repl();
   if (args[0] === '--help' || args[0] === '-h') { process.stdout.write(HELP); return 0; }
   if (args[0] === '--version' || args[0] === '-v') { process.stdout.write(`${LANG} ${VERSION}\n`); return 0; }
+
+  if (args[0] === 'fmt') return formatFiles(args.slice(1));
 
   if (args[0] === '--check' || args[0] === '-c') {
     const target = args[1];
