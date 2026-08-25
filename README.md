@@ -22,7 +22,7 @@ print("Самая длинная: ${longest.x}, ${longest.y} → ${round(longest
 
 ```bash
 node src/cli.ts examples/01_hello.dbgo   # выполнить файл
-node src/cli.ts                         # интерактивный режим (REPL)
+node src/cli.ts                         # интерактивный режим: Tab, история, :помощь
 node src/cli.ts -e 'print(2 ^ 10)'      # выполнить строку
 node src/cli.ts --check файл.dbgo       # проверить, не запуская
 npm test                                # прогнать все тесты

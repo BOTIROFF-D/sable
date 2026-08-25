@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { check } from './checker.ts';
 import { DbgoError, formatAt, formatError, formatErrors, registerSource, shortPath } from './errors.ts';
@@ -137,52 +138,154 @@ function isIncomplete(source: string): boolean {
   }
 }
 
+const HISTORY_FILE = join(homedir(), '.dbgo_history');
+const HISTORY_LIMIT = 500;
+
+/**
+ * История между запусками: без неё интерактивный режим забывает всё при выходе.
+ * Файл хранится в порядке ввода, readline ждёт обратный — новыми записями вперёд.
+ *
+ * Что набрано за сессию, считается здесь самостоятельно: readline наполняет свою
+ * историю только в терминале, и при перенаправлении ввода она осталась бы пустой.
+ */
+function loadHistory(): string[] {
+  try {
+    return readFileSync(HISTORY_FILE, 'utf8').split('\n').filter((l) => l.trim() !== '');
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(older: string[], typed: string[]): void {
+  const all: string[] = [];
+  for (const line of [...older, ...typed]) {
+    // Подряд идущие повторы засоряют историю и мешают листать.
+    if (all[all.length - 1] !== line) all.push(line);
+  }
+  try {
+    writeFileSync(HISTORY_FILE, all.slice(-HISTORY_LIMIT).join('\n') + '\n', 'utf8');
+  } catch {
+    // Нет доступа к домашней папке — не повод ронять сессию.
+  }
+}
+
+/** Дополнение по Tab: встроенные имена, объявленные имена и команды режима. */
+function makeCompleter(interp: Interpreter, commands: string[]) {
+  return (line: string): [string[], string] => {
+    const match = /[A-Za-z_À-ɏЀ-ӿ][A-Za-z_0-9À-ɏЀ-ӿ\u02BB\u02BC]*$|:[а-яa-z]*$/.exec(line);
+    const prefix = match ? match[0] : '';
+    const names = [
+      ...interp.builtins.ownEntries().keys(),
+      ...interp.globals.ownEntries().keys(),
+      ...commands,
+    ];
+    const hits = names.filter((n) => n.startsWith(prefix)).sort();
+    return [hits.length ? hits : prefix ? [] : names.sort(), prefix];
+  };
+}
+
+const REPL_COMMANDS = [':помощь', ':имена', ':время', ':очистить', ':выход'];
+
 async function repl(): Promise<number> {
   const interp = new Interpreter();
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  process.stdout.write(`${LANG} ${VERSION} — введите выражение, «:помощь» для справки, Ctrl+D для выхода\n`);
+  const older = loadHistory();
+  const typed: string[] = [];
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    history: [...older].reverse(),
+    historySize: HISTORY_LIMIT,
+    completer: makeCompleter(interp, REPL_COMMANDS),
+  });
+
+  process.stdout.write(
+    `${LANG} ${VERSION} — введите выражение, «:помощь» для справки, Ctrl+D для выхода\n`,
+  );
 
   let buffer = '';
-  const prompt = () => rl.setPrompt(buffer ? '  ... ' : `${LANG.toLowerCase()}> `);
+  const prompt = () => {
+    rl.setPrompt(buffer ? '  ... ' : `${LANG.toLowerCase()}> `);
+    rl.prompt();
+  };
   prompt();
-  rl.prompt();
+
+  /** Выполнить и напечатать результат; ошибка не роняет сессию. */
+  const evaluate = (code: string, showTime: boolean): void => {
+    const started = performance.now();
+    try {
+      const value = runSource(code, '<repl>', interp);
+      if (value !== null && value !== undefined) process.stdout.write(repr(value) + '\n');
+      if (showTime) process.stdout.write(`  за ${(performance.now() - started).toFixed(3)} мс\n`);
+    } catch (e) {
+      if (e instanceof DbgoError) process.stdout.write(formatError(e, code) + '\n');
+      else throw e;
+    }
+  };
 
   for await (const line of rl) {
+    if (line.trim() !== '') typed.push(line);
     const whole = buffer ? buffer + '\n' + line : line;
     const trimmed = whole.trim();
 
-    if (!buffer && (trimmed === ':выход' || trimmed === ':quit' || trimmed === ':q')) break;
-    if (!buffer && (trimmed === ':помощь' || trimmed === ':help')) {
-      process.stdout.write(HELP_REPL);
-      prompt(); rl.prompt(); continue;
+    if (!buffer && trimmed.startsWith(':')) {
+      const [cmd, ...rest] = trimmed.split(/\s+/);
+      const arg = trimmed.slice(cmd!.length).trim();
+
+      if (cmd === ':выход' || cmd === ':quit' || cmd === ':q') break;
+
+      if (cmd === ':помощь' || cmd === ':help') {
+        process.stdout.write(HELP_REPL);
+      } else if (cmd === ':очистить') {
+        process.stdout.write('\x1b[2J\x1b[H');
+      } else if (cmd === ':имена') {
+        const own = [...interp.globals.ownEntries().keys()].sort();
+        process.stdout.write(
+          own.length
+            ? `  объявлено: ${own.join(', ')}\n`
+            : '  пока ничего не объявлено; встроенные имена дополняются по Tab\n',
+        );
+      } else if (cmd === ':время') {
+        if (arg === '') process.stdout.write('  после «:время» нужно выражение\n');
+        else evaluate(arg, true);
+      } else {
+        process.stdout.write(`  неизвестная команда «${cmd}»; список — «:помощь»\n`);
+      }
+
+      buffer = '';
+      void rest;
+      prompt();
+      continue;
     }
-    if (trimmed === '') { buffer = ''; prompt(); rl.prompt(); continue; }
+
+    if (trimmed === '') { buffer = ''; prompt(); continue; }
 
     if (isIncomplete(whole)) {
       buffer = whole;
-      prompt(); rl.prompt(); continue;
+      prompt();
+      continue;
     }
 
     buffer = '';
-    try {
-      const value = runSource(whole, '<repl>', interp);
-      if (value !== null && value !== undefined) process.stdout.write(repr(value) + '\n');
-    } catch (e) {
-      if (e instanceof DbgoError) process.stdout.write(formatError(e, whole) + '\n');
-      else throw e;
-    }
+    evaluate(whole, false);
     prompt();
-    rl.prompt();
   }
 
+  saveHistory(older, typed);
   rl.close();
   process.stdout.write('\n');
   return 0;
 }
 
 const HELP_REPL = `
-  :помощь   эта справка
-  :выход    выйти (или Ctrl+D)
+  :помощь              эта справка
+  :имена               что объявлено в этой сессии
+  :время <выражение>   выполнить и показать, сколько заняло
+  :очистить            очистить экран
+  :выход               выйти (или Ctrl+D)
+
+  Tab                  дополнить имя
+  ↑ / ↓                история; она сохраняется между запусками
+                       в ~/.dbgo_history
 
   Незавершённая строка продолжается автоматически — например, после «{».
 `;
