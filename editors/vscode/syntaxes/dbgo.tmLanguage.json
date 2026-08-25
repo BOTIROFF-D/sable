@@ -1,0 +1,147 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "dbgo",
+  "scopeName": "source.dbgo",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#builtins" },
+    { "include": "#calls" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.dbgo",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.dbgo",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "patterns": [{ "include": "#comments" }]
+        }
+      ]
+    },
+    "escapes": {
+      "name": "constant.character.escape.dbgo",
+      "match": "\\\\(u\\{[0-9A-Fa-f]+\\}|[nrt0\\\\\"'`$])"
+    },
+    "interpolation": {
+      "name": "meta.embedded.line.dbgo",
+      "begin": "\\$\\{",
+      "end": "\\}",
+      "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.dbgo" } },
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.dbgo" } },
+      "patterns": [{ "include": "$self" }]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.dbgo",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "include": "#escapes" }, { "include": "#interpolation" }]
+        },
+        {
+          "name": "string.quoted.single.dbgo",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "include": "#escapes" }, { "include": "#interpolation" }]
+        },
+        {
+          "name": "string.quoted.other.backtick.dbgo",
+          "begin": "`",
+          "end": "`",
+          "patterns": [{ "include": "#escapes" }, { "include": "#interpolation" }]
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_\\p{Cyrillic}][A-Za-z0-9_\\p{Cyrillic}\\u02BB\\u02BC]*)",
+          "captures": {
+            "1": { "name": "storage.type.function.dbgo" },
+            "2": { "name": "entity.name.function.dbgo" }
+          }
+        },
+        {
+          "match": "\\b(struct)\\s+([A-Za-z_\\p{Cyrillic}][A-Za-z0-9_\\p{Cyrillic}\\u02BB\\u02BC]*)",
+          "captures": {
+            "1": { "name": "storage.type.struct.dbgo" },
+            "2": { "name": "entity.name.type.dbgo" }
+          }
+        },
+        {
+          "match": "\\b(let|const)\\s+([A-Za-z_\\p{Cyrillic}][A-Za-z0-9_\\p{Cyrillic}\\u02BB\\u02BC]*)",
+          "captures": {
+            "1": { "name": "storage.type.dbgo" },
+            "2": { "name": "variable.other.declaration.dbgo" }
+          }
+        },
+        {
+          "match": "\\b(import)\\s+(?=[\"'`])",
+          "captures": { "1": { "name": "keyword.control.import.dbgo" } }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.dbgo",
+          "match": "\\b(if|else|while|for|in|break|continue|return|try|catch)\\b"
+        },
+        {
+          "name": "storage.type.dbgo",
+          "match": "\\b(let|const|fn|struct)\\b"
+        },
+        {
+          "name": "keyword.control.import.dbgo",
+          "match": "\\b(import|as)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.dbgo",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "variable.language.self.dbgo",
+          "match": "\\bself\\b"
+        }
+      ]
+    },
+    "constants": {
+      "name": "constant.language.dbgo",
+      "match": "\\b(true|false|nil)\\b"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.dbgo",
+          "match": "\\b0[xX][0-9A-Fa-f_]+\\b"
+        },
+        {
+          "name": "constant.numeric.decimal.dbgo",
+          "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9]+)?\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "name": "support.function.builtin.dbgo",
+      "match": "\\b(print|write|input|len|type|str|repr|num|int|bool|keys|values|entries|range|map|filter|reduce|sum|min|max|abs|floor|ceil|round|sqrt|pow|sign|clamp|log|exp|hypot|sin|cos|tan|asin|acos|atan|atan2|pi|random|random_int|now|clock|assert|error|read_file|write_file|to_json|from_json|zip|enumerate|sorted|reversed|from_entries)\\s*(?=\\()"
+    },
+    "calls": {
+      "match": "([A-Za-z_\\p{Cyrillic}][A-Za-z0-9_\\p{Cyrillic}\\u02BB\\u02BC]*)\\s*(?=\\()",
+      "captures": { "1": { "name": "entity.name.function.call.dbgo" } }
+    },
+    "operators": {
+      "name": "keyword.operator.dbgo",
+      "match": "(\\+=|-=|\\*=|/=|==|!=|<=|>=|&&|\\|\\||\\?\\?|->|\\.\\.|[-+*/%^<>=!?:])"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "dbgo",
+  "displayName": "dbgo",
+  "description": "Подсветка синтаксиса для языка dbgo",
+  "version": "0.2.0",
+  "publisher": "botiroff",
+  "license": "MIT",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "dbgo",
+        "aliases": ["dbgo"],
+        "extensions": [".dbgo"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "dbgo",
+        "scopeName": "source.dbgo",
+        "path": "./syntaxes/dbgo.tmLanguage.json"
+      }
+    ]
+  }
+}
