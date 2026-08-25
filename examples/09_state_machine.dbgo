@@ -1,0 +1,161 @@
+// Машина состояний: жизненный цикл заказа доставки.
+//
+// Правила переходов лежат в данных, а не в коде: словарь «состояние → событие →
+// новое состояние». Добавить статус — значит дописать строку в таблицу, а не
+// новую ветку в if. Машина сама считает, сколько заказ провёл в каждом статусе,
+// и не падает на кривом журнале, а собирает список замечаний.
+
+const START = "создан"
+
+const TRANSITIONS = {
+  создан:    { оплата: "оплачен", отмена: "отменён" },
+  оплачен:   { назначен: "у курьера", возврат: "возвращён", отмена: "отменён" },
+  "у курьера": { забрал: "в пути", отмена: "отменён" },
+  "в пути":  { доставил: "доставлен", сбой: "проблема" },
+  проблема:  { повтор: "у курьера", возврат: "возвращён" },
+  доставлен: {},
+  отменён:   {},
+  возвращён: {},
+}
+
+// Состояние, из которого нет ни одного перехода, — конечное.
+fn is_final(state) { return TRANSITIONS.get(state).len() == 0 }
+
+// ---- машина ---------------------------------------------------------------
+
+struct Machine {
+  since                // время входа в текущий статус, в минутах от полуночи
+  state = START
+  spent = {}           // сколько минут проведено в каждом статусе
+  path = [START]       // пройденные статусы, для наглядного следа
+  problems = []        // отвергнутые события — их разбирают потом
+
+  // Значение по умолчанию вычисляется при каждом создании экземпляра, так что
+  // {} и [START] здесь — свои у каждого заказа, а не общие на всех.
+
+  fn fire(event, at) {
+    let allowed = TRANSITIONS.get(self.state)
+    if !allowed.has(event) {
+      let hint = allowed.len() == 0 ?
+        "статус конечный" :
+        "здесь ждут: ${allowed.keys().join(', ')}"
+      self.problems.push("${minutes_to_time(at)} «${event}» невозможно из «${self.state}» — ${hint}")
+      return false
+    }
+    self.spent.set(self.state, self.spent.get(self.state, 0) + (at - self.since))
+    self.state = allowed.get(event)
+    self.since = at
+    self.path.push(self.state)
+    return true
+  }
+
+  // Хвост последнего статуса: до конца наблюдения заказ всё ещё в нём.
+  // В конечном статусе время не идёт — заказ уже закрыт.
+  fn close(at) {
+    if !is_final(self.state) {
+      self.spent.set(self.state, self.spent.get(self.state, 0) + (at - self.since))
+    }
+    return self
+  }
+
+  fn trace() { return self.path.join(" → ") }
+}
+
+// ---- время ----------------------------------------------------------------
+
+fn time_to_minutes(hhmm) {
+  let parts = hhmm.split(":")
+  return num(parts[0]) * 60 + num(parts[1])
+}
+
+fn minutes_to_time(m) {
+  return "${str(int(m / 60)).pad_start(2, '0')}:${str(int(m % 60)).pad_start(2, '0')}"
+}
+
+fn duration(m) {
+  if m < 60 { return "${m} мин" }
+  let h = int(m / 60)
+  return m % 60 == 0 ? "${h} ч" : "${h} ч ${m % 60} мин"
+}
+
+// ---- журнал ---------------------------------------------------------------
+// Каждая строка: время, номер заказа, событие. Порядок общий, заказы вперемешку.
+
+const LOG = `09:00 A-101 оплата
+09:05 A-102 оплата
+09:12 A-101 назначен
+09:20 A-103 отмена
+09:30 A-101 забрал
+09:35 A-102 назначен
+09:40 A-102 доставил
+10:05 A-101 доставил
+10:05 A-102 оплата
+10:10 A-104 оплата
+10:12 B-777 оплата
+10:25 A-104 назначен
+10:40 A-104 забрал
+11:15 A-104 сбой
+11:50 A-104 повтор
+12:00 A-104 забрал`
+
+// Когда заказ появился: с этого момента идёт отсчёт статуса «создан».
+const CREATED = { "A-101": "08:50", "A-102": "08:58", "A-103": "09:10", "A-104": "10:02" }
+const OBSERVED_UNTIL = "12:30"
+
+let orders = {}
+let order_ids = CREATED.keys()
+for id in order_ids { orders.set(id, Machine(time_to_minutes(CREATED.get(id)))) }
+
+let strays = []
+for line in LOG.split("\n") {
+  let parts = line.trim().split(" ")
+  let at = time_to_minutes(parts[0])
+  let id = parts[1]
+  let event = parts[2]
+
+  if !orders.has(id) {
+    strays.push("${parts[0]} событие «${event}» для неизвестного заказа ${id}")
+    continue
+  }
+  orders.get(id).fire(event, at)
+}
+
+let end = time_to_minutes(OBSERVED_UNTIL)
+for id in order_ids { orders.get(id).close(end) }
+
+// ---- отчёт ----------------------------------------------------------------
+
+print("Заказы на ${OBSERVED_UNTIL}\n")
+
+for id in order_ids {
+  let m = orders.get(id)
+  let mark = is_final(m.state) ? "✓" : "…"
+  print("${mark} ${id}: ${m.trace()}")
+  let parts = m.spent.entries().sort((a, b) -> b[1] - a[1])
+  print("    дольше всего в «${parts[0][0]}» — ${duration(parts[0][1])}")
+  for p in m.problems { print("    ⚠ ${p}") }
+}
+
+// ---- сводка ---------------------------------------------------------------
+
+print("")
+let finished = order_ids.filter(id -> is_final(orders.get(id).state))
+print("Завершено: ${finished.len()} из ${order_ids.len()}")
+
+// Суммарное время всех заказов по статусам — видно, где узкое место.
+let totals = {}
+for id in order_ids {
+  for state in orders.get(id).spent {
+    totals.set(state, totals.get(state, 0) + orders.get(id).spent.get(state))
+  }
+}
+
+print("\nСуммарно по статусам:")
+for pair in totals.entries().sort((a, b) -> b[1] - a[1]) {
+  print("  ${pair[0].pad_end(11, ' ')} ${duration(pair[1])}")
+}
+
+let stuck = order_ids.filter(id -> !is_final(orders.get(id).state))
+print("\nВисят: ${stuck.map(id -> '${id} (${orders.get(id).state})').join(', ')}")
+
+for s in strays { print("⚠ ${s}") }

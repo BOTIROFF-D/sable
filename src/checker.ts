@@ -56,6 +56,8 @@ export function check(program: Program, globals: Iterable<string>): Diagnostic[]
 class Checker {
   private diags: Diagnostic[] = [];
   private scope: Scope;
+  /** Область объявлений верхнего уровня программы — НЕ область встроенных имён. */
+  private topScope: Scope;
   /** Тела функций, отложенные до конца текущего блока. */
   private deferred: Array<() => void> = [];
   private loopDepth = 0;
@@ -68,6 +70,7 @@ class Checker {
     // Поэтому `let sum = 0` не «уже объявлено», а законное затенение.
     const builtins: Scope = { names: new Map(), parent: null };
     this.scope = { names: new Map(), parent: builtins };
+    this.topScope = this.scope;
     const nowhere: Span = { line: 0, col: 0, file: '<встроенное>' };
     for (const name of globals) {
       builtins.names.set(name, {
@@ -311,11 +314,10 @@ class Checker {
 
   /** Значения полей по умолчанию и методы структуры. */
   private deferStructBodies(stmt: Extract<Stmt, { kind: 'StructDecl' }>, info: StructInfo): void {
-    // Значения по умолчанию вычисляются рядом с глобальными именами и видят
+    // Значения по умолчанию вычисляются рядом с именами верхнего уровня и видят
     // предыдущие поля — область объявления структуры им недоступна.
-    const fieldScope = this.scope;
     this.deferred.push(() => {
-      this.block([], { names: new Map(), parent: globalOf(fieldScope) }, () => {
+      this.block([], { names: new Map(), parent: this.topScope }, () => {
         for (const f of stmt.fields) {
           if (f.def) this.expression(f.def);
           this.define(f.name, stmt.span, 'param', true, false);
@@ -493,12 +495,6 @@ class Checker {
 // ---- вспомогательное ------------------------------------------------------
 
 const bodyOf = (stmt: Stmt): Stmt[] => (stmt.kind === 'Block' ? stmt.body : [stmt]);
-
-const globalOf = (scope: Scope): Scope => {
-  let s = scope;
-  while (s.parent) s = s.parent;
-  return s;
-};
 
 const arityOf = (name: string, params: Param[]): Arity => ({
   name,

@@ -1,0 +1,158 @@
+// Два алгоритма на графах, которые реально нужны.
+//
+// 1. Дейкстра: кратчайший путь по взвешенному графу дорог + восстановление маршрута.
+// 2. Топологическая сортировка (алгоритм Кана): в каком порядке выполнять задачи
+//    с зависимостями — и как заметить, что порядок невозможен из-за цикла.
+//
+// Граф хранится словарём смежности: узел → словарь «сосед → вес».
+
+// ---- 1. Дороги ------------------------------------------------------------
+
+const ROADS = {
+  Ташкент:   { Гулистан: 120, Чирчик: 32, Джизак: 200 },
+  Чирчик:    { Ташкент: 32, Ангрен: 80 },
+  Ангрен:    { Чирчик: 80, Коканд: 130 },
+  Гулистан:  { Ташкент: 120, Джизак: 90 },
+  Джизак:    { Ташкент: 200, Гулистан: 90, Самарканд: 130 },
+  Коканд:    { Ангрен: 130, Фергана: 90, Самарканд: 320 },
+  Фергана:   { Коканд: 90 },
+  Самарканд: { Джизак: 130, Коканд: 320, Бухара: 270 },
+  Бухара:    { Самарканд: 270, Хива: 440 },
+  Хива:      { Бухара: 440 },
+  Термез:    {},                       // в этом графе дорог до Термеза нет
+}
+
+// Заведомо больше любого реального расстояния — заменяет «бесконечность».
+const FAR = 1e9
+
+// Возвращает два словаря: «до кого сколько км» и «откуда мы туда пришли».
+// Второй нужен, чтобы восстановить сам маршрут, а не только его длину.
+fn dijkstra(graph, from) {
+  let dist = {}
+  let prev = {}
+  let unvisited = []
+  for node in graph {
+    dist.set(node, node == from ? 0 : FAR)
+    unvisited.push(node)
+  }
+
+  while unvisited.len() > 0 {
+    // Очереди с приоритетом в языке нет, поэтому просто ищем минимум перебором:
+    // на графе в десяток узлов это честнее, чем городить кучу.
+    let best = 0
+    for i in 1..unvisited.len() {
+      if dist.get(unvisited[i]) < dist.get(unvisited[best]) { best = i }
+    }
+    let node = unvisited.remove_at(best)
+    if dist.get(node) == FAR { break }   // остальные недостижимы
+
+    for neighbour in graph.get(node) {
+      let candidate = dist.get(node) + graph.get(node).get(neighbour)
+      if candidate < dist.get(neighbour) {
+        dist.set(neighbour, candidate)
+        prev.set(neighbour, node)
+      }
+    }
+  }
+
+  return { dist: dist, prev: prev }
+}
+
+fn route(prev, from, to) {
+  let path = [to]
+  let node = to
+  while node != from {
+    node = prev.get(node, nil)
+    if node == nil { return [] }        // пути нет
+    path.push(node)
+  }
+  return path.reverse()
+}
+
+let found = dijkstra(ROADS, "Ташкент")
+
+print("Кратчайшие пути из Ташкента:\n")
+let cities = found.dist.keys().sort((a, b) -> found.dist.get(a) - found.dist.get(b))
+for city in cities {
+  if city == "Ташкент" { continue }
+  let km = found.dist.get(city)
+  if km == FAR {
+    print("  ${city.pad_end(10, ' ')}   —      дороги нет")
+    continue
+  }
+  let path = route(found.prev, "Ташкент", city)
+  print("  ${city.pad_end(10, ' ')} ${str(km).pad_start(4, ' ')} км   ${path.join(' → ')}")
+}
+
+// Проверка руками: Фергана дешевле через Чирчик и Ангрен, чем через Самарканд.
+assert(found.dist.get("Фергана") == 32 + 80 + 130 + 90, "маршрут до Ферганы посчитан неверно")
+
+// ---- 2. Порядок задач -----------------------------------------------------
+
+// Ключ — задача, значение — список того, что должно быть сделано ДО неё.
+const TASKS = {
+  "снять помещение": [],
+  "ремонт": ["снять помещение"],
+  "мебель": ["ремонт"],
+  "лицензия": ["снять помещение"],
+  "нанять преподавателей": ["лицензия"],
+  "программа курса": [],
+  "реклама": ["программа курса", "ремонт"],
+  "набор группы": ["реклама", "нанять преподавателей"],
+  "первый урок": ["набор группы", "мебель"],
+}
+
+// Алгоритм Кана: берём задачи, у которых не осталось незакрытых зависимостей,
+// и снимаем их одну за другой. Если в какой-то момент таких нет, а задачи
+// остались — в зависимостях цикл.
+fn topological_order(tasks) {
+  let waiting = {}      // задача → сколько зависимостей ещё не выполнено
+  let unlocks = {}      // задача → кого она разблокирует
+  for task in tasks {
+    waiting.set(task, tasks.get(task).len())
+    if !unlocks.has(task) { unlocks.set(task, []) }
+    for dep in tasks.get(task) {
+      let list = unlocks.get(dep, [])
+      list.push(task)
+      unlocks.set(dep, list)
+    }
+  }
+
+  let ready = waiting.keys().filter(t -> waiting.get(t) == 0)
+  let order = []
+  let waves = []
+
+  while ready.len() > 0 {
+    // Всё, что готово одновременно, можно делать параллельно — это «волна».
+    waves.push(ready)
+    let next = []
+    for task in ready {
+      order.push(task)
+      for dependent in unlocks.get(task) {
+        waiting.set(dependent, waiting.get(dependent) - 1)
+        if waiting.get(dependent) == 0 { next.push(dependent) }
+      }
+    }
+    ready = next
+  }
+
+  let blocked = waiting.keys().filter(t -> waiting.get(t) > 0)
+  return { order: order, waves: waves, blocked: blocked }
+}
+
+let plan = topological_order(TASKS)
+
+print("\nПорядок работ (${plan.order.len()} задач, ${plan.waves.len()} волн):\n")
+for i in 0..plan.waves.len() {
+  print("  Волна ${i + 1}: ${plan.waves[i].join(', ')}")
+}
+
+// ---- 3. Что будет, если зависимости зациклятся -----------------------------
+
+let broken = TASKS.clone()
+broken.set("программа курса", ["набор группы"])   // курс ждёт группу, группа — курс
+let bad = topological_order(broken)
+
+print("\nЕсли «программа курса» начнёт ждать «набор группы»:")
+print("  разложить удалось: ${bad.order.len()} из ${broken.len()}")
+print("  застряли в цикле: ${bad.blocked.sort().join(', ')}")

@@ -9,7 +9,7 @@
   "scripts": {
     "dbgo": "node src/cli.ts",
     "repl": "node src/cli.ts",
-    "test": "node tests/run.ts && node tests/checker.ts",
+    "test": "node tests/run.ts && node tests/checker.ts && node tests/docs.ts",
     "check": "node src/cli.ts --check",
     "typecheck": "tsc --noEmit"
   },

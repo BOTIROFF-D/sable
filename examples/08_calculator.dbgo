@@ -1,0 +1,226 @@
+// Калькулятор с настоящим разбором выражений: текст → лексемы → дерево → число.
+//
+// Тот же путь, которым идёт сам dbgo, только грамматика короче.
+// Показывает: структуры как узлы дерева, type() вместо switch по тегу,
+// взаимную рекурсию, замыкание над позицией в потоке лексем.
+
+// ---- узлы дерева ----------------------------------------------------------
+
+struct Num { value }
+struct Var { name }
+struct Bin { op, left, right }
+struct Neg { operand }
+struct Call { name, args }
+
+// ---- лексер ---------------------------------------------------------------
+
+const DIGITS = "0123456789"
+const LETTERS = "abcdefghijklmnopqrstuvwxyz_"
+const SINGLE = "+-*/%^(),="
+
+fn tokenize(src) {
+  let tokens = []
+  let i = 0
+  while i < src.len() {
+    let ch = src[i]
+    if ch == " " { i += 1; continue }
+
+    if DIGITS.contains(ch) {
+      let start = i
+      while i < src.len() && (DIGITS.contains(src[i]) || src[i] == ".") { i += 1 }
+      tokens.push({ kind: "число", text: src.slice(start, i) })
+      continue
+    }
+
+    if LETTERS.contains(ch) {
+      let start = i
+      while i < src.len() && (LETTERS.contains(src[i]) || DIGITS.contains(src[i])) { i += 1 }
+      tokens.push({ kind: "имя", text: src.slice(start, i) })
+      continue
+    }
+
+    if SINGLE.contains(ch) {
+      tokens.push({ kind: "знак", text: ch })
+      i += 1
+      continue
+    }
+
+    // Перехвата ошибок в языке нет, поэтому непонятный символ — это конец:
+    // error() печатает место и останавливает программу.
+    error("непонятный символ «${ch}» в позиции ${i}")
+  }
+  tokens.push({ kind: "конец", text: "" })
+  return tokens
+}
+
+// ---- разбор (рекурсивный спуск) -------------------------------------------
+//
+// Каждый уровень грамматики — своя функция; чем ниже, тем сильнее связывание:
+//   выражение := слагаемое (('+' | '-') слагаемое)*
+//   слагаемое := унарное (('*' | '/' | '%') унарное)*
+//   унарное   := '-' унарное | степень
+//   степень   := первичное ('^' унарное)?
+//   первичное := число | имя | имя '(' аргументы ')' | '(' выражение ')'
+//
+// Порядок уровней повторяет сам dbgo: степень связывает сильнее унарного минуса,
+// поэтому -2^2 = -4, а правая рекурсия в «степени» даёт 2^3^2 = 2^(3^2).
+
+fn parse(tokens) {
+  // pos живёт в замыкании: все вложенные функции видят одну и ту же позицию.
+  let pos = 0
+  fn peek() { return tokens[pos] }
+  fn take() { let t = tokens[pos]; pos += 1; return t }
+  fn at(text) { return peek().text == text }
+  fn done() { return peek().kind == "конец" }
+  fn eat(text) {
+    if !at(text) { error("ожидалось «${text}», а встретилось «${peek().text}»") }
+    return take()
+  }
+
+  fn expression() {
+    let node = additive()
+    if !done() { error("лишнее «${peek().text}» в конце выражения") }
+    return node
+  }
+
+  fn additive() {
+    let left = multiplicative()
+    while at("+") || at("-") { left = Bin(take().text, left, multiplicative()) }
+    return left
+  }
+
+  fn multiplicative() {
+    let left = unary()
+    while at("*") || at("/") || at("%") { left = Bin(take().text, left, unary()) }
+    return left
+  }
+
+  fn unary() {
+    if at("-") { take(); return Neg(unary()) }
+    if at("+") { take(); return unary() }
+    return power()
+  }
+
+  fn power() {
+    let base = primary()
+    // Правая ассоциативность получается сама: рекурсия вместо цикла.
+    if at("^") { take(); return Bin("^", base, unary()) }
+    return base
+  }
+
+  fn primary() {
+    if at("(") { take(); let inner = additive(); eat(")"); return inner }
+
+    let t = take()
+    if t.kind == "число" { return Num(num(t.text)) }
+    if t.kind == "имя" {
+      if !at("(") { return Var(t.text) }
+      take()
+      let args = []
+      if !at(")") {
+        args.push(additive())
+        while at(",") { take(); args.push(additive()) }
+      }
+      eat(")")
+      return Call(t.text, args)
+    }
+    error("не выражение: «${t.text}»")
+  }
+
+  return expression()
+}
+
+// ---- вычисление -----------------------------------------------------------
+
+const CONSTANTS = { pi: 3.141592653589793, e: 2.718281828459045 }
+
+fn evaluate(node, vars) {
+  // type() у экземпляра возвращает имя структуры — отсюда и разбор по видам узлов.
+  let kind = type(node)
+
+  if kind == "Num" { return node.value }
+
+  if kind == "Var" {
+    if vars.has(node.name) { return vars.get(node.name) }
+    if CONSTANTS.has(node.name) { return CONSTANTS.get(node.name) }
+    error("неизвестное имя «${node.name}»")
+  }
+
+  if kind == "Neg" { return -evaluate(node.operand, vars) }
+
+  if kind == "Bin" {
+    let a = evaluate(node.left, vars)
+    let b = evaluate(node.right, vars)
+    if node.op == "+" { return a + b }
+    if node.op == "-" { return a - b }
+    if node.op == "*" { return a * b }
+    if node.op == "/" { return b == 0 ? error("деление на ноль") : a / b }
+    if node.op == "%" { return a % b }
+    return a ^ b
+  }
+
+  // kind == "Call"
+  let args = node.args.map(a -> evaluate(a, vars))
+  if node.name == "sqrt" { return sqrt(args[0]) }
+  if node.name == "abs" { return abs(args[0]) }
+  if node.name == "round" { return round(args[0], args.len() > 1 ? args[1] : 0) }
+  if node.name == "min" { return min(args) }
+  if node.name == "max" { return max(args) }
+  error("нет такой функции: ${node.name}")
+}
+
+// ---- печать дерева --------------------------------------------------------
+
+fn show(node, prefix) {
+  let kind = type(node)
+  if kind == "Num" { return "${prefix}${node.value}\n" }
+  if kind == "Var" { return "${prefix}${node.name}\n" }
+  if kind == "Neg" { return "${prefix}(-)\n" + show(node.operand, prefix + "    ") }
+  if kind == "Bin" {
+    return "${prefix}(${node.op})\n" + show(node.left, prefix + "    ") + show(node.right, prefix + "    ")
+  }
+  let out = "${prefix}${node.name}()\n"
+  for a in node.args { out += show(a, prefix + "    ") }
+  return out
+}
+
+// ---- работа ---------------------------------------------------------------
+
+const PROGRAM = [
+  "x = 12",
+  "y = x * 3 - 4",
+  "y / 2",
+  "2 ^ 3 ^ 2",
+  "-2 ^ 2",
+  "2 ^ -1",
+  "(1 + 2) * (3 + 4) % 10",
+  "sqrt(x * 3) + abs(0 - 6)",
+  "round(pi, 4)",
+  "max(x, y, sqrt(400))",
+]
+
+let vars = {}
+
+print("Лексемы для «y = x * 3 - 4»:")
+print("  " + tokenize("y = x * 3 - 4").map(t -> t.text == "" ? "⏎" : t.text).join(" · "))
+print("")
+
+print("Дерево для «2 + 3 * 4 ^ 2»:")
+write(show(parse(tokenize("2 + 3 * 4 ^ 2")), "  "))
+print("")
+
+for line in PROGRAM {
+  let tokens = tokenize(line)
+  // Присваивание отличаем до разбора: «имя =» в начале — это не выражение.
+  if tokens.len() > 2 && tokens[0].kind == "имя" && tokens[1].text == "=" {
+    let name = tokens[0].text
+    let value = evaluate(parse(tokens.slice(2)), vars)
+    vars.set(name, value)
+    print("${line.pad_end(24, ' ')} → ${name} = ${value}")
+    continue
+  }
+  print("${line.pad_end(24, ' ')} = ${evaluate(parse(tokens), vars)}")
+}
+
+print("")
+print("Переменные: ${vars}")

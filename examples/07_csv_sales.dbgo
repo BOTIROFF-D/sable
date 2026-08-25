@@ -1,0 +1,133 @@
+// Разбор CSV и сводка по продажам.
+//
+// Задача целиком: сырой текст выгрузки → типизированные записи → три среза
+// (по категориям, по товарам, по часам) → отчёт с гистограммой.
+// Ничего, кроме строк, списков и словарей, для этого не нужно.
+
+const CSV = `time;product;category;qty;price
+08:12;эспрессо;кофе;2;12000
+08:40;капучино;кофе;1;18000
+09:05;круассан;выпечка;3;15000
+09:31;латте;кофе;2;20000
+10:15;чизкейк;выпечка;1;28000
+10:47;эспрессо;кофе;1;12000
+11:02;чай;чай;4;9000
+12:20;капучино;кофе;3;18000
+12:55;круассан;выпечка;2;15000
+13:10;латте;кофе;1;20000
+13:44;чай;чай;2;9000
+14:05;чизкейк;выпечка;2;28000
+14:30;капучино;кофе;2;18000`
+
+// ---- разбор ---------------------------------------------------------------
+
+// Первая строка CSV — имена колонок. Заводим по ним словарь: так дальше
+// можно писать row.qty, а не row[3], и порядок колонок перестаёт быть важен.
+fn parse_csv(text, sep) {
+  let lines = text.trim().split("\n")
+  let header = lines[0].trim().split(sep)
+  let rows = []
+  for i in 1..lines.len() {
+    let cells = lines[i].trim().split(sep)
+    if cells.len() != header.len() {
+      error("строка ${i + 1}: колонок ${cells.len()}, а в заголовке ${header.len()}")
+    }
+    let row = {}
+    for c in 0..header.len() {
+      // Числовые колонки узнаём по содержимому: num() со вторым аргументом
+      // не падает на нечисловом, а возвращает запасное значение.
+      let raw = cells[c].trim()
+      let asNumber = num(raw, nil)
+      row.set(header[c], asNumber ?? raw)
+    }
+    rows.push(row)
+  }
+  return rows
+}
+
+let sales = parse_csv(CSV, ";")
+for row in sales { row.set("sum", row.qty * row.price) }
+
+// ---- инструменты ----------------------------------------------------------
+
+// Группировка «список → словарь ключ → список»: нужна трижды, пишем один раз.
+fn group_by(items, key_of) {
+  let groups = {}
+  for item in items {
+    let key = key_of(item)
+    let bucket = groups.get(key, [])
+    bucket.push(item)
+    groups.set(key, bucket)
+  }
+  return groups
+}
+
+fn total(items, field) { return items.map(r -> r.get(field)).reduce((a, b) -> a + b, 0) }
+
+// Разряды по три цифры: 342000 → «342 000».
+fn money(n) {
+  let digits = str(int(n)).chars().reverse()
+  let out = []
+  for i in 0..digits.len() {
+    if i > 0 && i % 3 == 0 { out.push(" ") }
+    out.push(digits[i])
+  }
+  return out.reverse().join("") + " сум"
+}
+
+fn bar(part, whole, width) {
+  let filled = int(round(part / whole * width))
+  return "█" * filled + "·" * (width - filled)
+}
+
+// ---- срез 1: категории ----------------------------------------------------
+
+let revenue = total(sales, "sum")
+let by_category = group_by(sales, r -> r.category)
+
+print("Выручка за день: ${money(revenue)} за ${sales.len()} продаж")
+print("")
+print("По категориям:")
+
+// entries() даёт список пар [ключ, значение] — его уже можно сортировать.
+let categories = by_category.entries().sort((a, b) -> total(b[1], "sum") - total(a[1], "sum"))
+for pair in categories {
+  let name = pair[0]
+  let rows = pair[1]
+  let sum = total(rows, "sum")
+  let share = round(sum / revenue * 100, 1)
+  print("  ${name.pad_end(9, '.')} ${bar(sum, revenue, 20)} ${str(share).pad_start(5, ' ')}%  ${money(sum)}")
+}
+
+// ---- срез 2: товары -------------------------------------------------------
+
+print("")
+print("Топ товаров:")
+
+let by_product = group_by(sales, r -> r.product)
+let products = by_product.entries().sort((a, b) -> total(b[1], "sum") - total(a[1], "sum"))
+for i in 0..3 {
+  let name = products[i][0]
+  let rows = products[i][1]
+  print("  ${i + 1}. ${name.pad_end(10, ' ')} ${total(rows, 'qty')} шт.  ${money(total(rows, 'sum'))}")
+}
+
+// ---- срез 3: часы ---------------------------------------------------------
+
+print("")
+print("По часам:")
+
+// Час — первые два символа времени; slice режет по символам, а не по байтам.
+let by_hour = group_by(sales, r -> r.time.slice(0, 2))
+let hours = by_hour.keys().sort()
+let peak = hours.first()
+for hour in hours {
+  let rows = by_hour.get(hour)
+  let sum = total(rows, "sum")
+  if sum > total(by_hour.get(peak), "sum") { peak = hour }
+  print("  ${hour}:00  ${bar(sum, revenue, 20)} ${money(sum)}")
+}
+
+print("")
+print("Час пик: ${peak}:00 — ${money(total(by_hour.get(peak), 'sum'))}")
+print("Средний чек: ${money(round(revenue / sales.len()))}")

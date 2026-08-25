@@ -1,0 +1,219 @@
+// Маленький поисковый движок по заметкам: инвертированный индекс, ранжирование,
+// поиск точной фразы и вывод сниппета с подсветкой.
+//
+// Это чистая работа со строками и словарями — ровно то, из чего состоит
+// большинство настоящих задач по обработке текста.
+
+const NOTES = [
+  {
+    id: "n1",
+    title: "Как мы считаем посещаемость",
+    text: `Посещаемость считается по отметкам преподавателя. Отметка ставится
+    в день урока; если преподаватель не отметил группу за сутки, система
+    напоминает ему, а потом закрывает урок автоматически.`,
+  },
+  {
+    id: "n2",
+    title: "Долги и рассрочка",
+    text: `Долг появляется, когда занятие проведено, а оплата не поступила.
+    Долг не растёт, пока ученик заморожен. Рассрочка делит оплату на части,
+    но каждая часть — это отдельный срок и отдельное напоминание.`,
+  },
+  {
+    id: "n3",
+    title: "Заморозка ученика",
+    text: `Заморозка снимает дни с биллинга: пока ученик заморожен, оплата за
+    эти дни не начисляется. Посещаемость в такие дни не считается пропуском.`,
+  },
+  {
+    id: "n4",
+    title: "Отметка задним числом",
+    text: `Преподаватель может поставить отметку задним числом только за
+    последние сутки. Дальше отметку ставит администратор, и это попадает в
+    журнал изменений.`,
+  },
+]
+
+// Слова, которые есть почти в каждом тексте: в индексе от них один шум.
+const STOP = ["и", "а", "в", "не", "на", "за", "по", "это", "но", "что", "как", "то", "же", "к"]
+const PUNCT = ".,!?;:()«»\"'"
+
+// ---- нормализация ----------------------------------------------------------
+
+// Слово в тексте и слово в индексе — разные вещи: в индекс идёт нижний регистр
+// без знаков препинания, а для показа нужен исходный вид.
+fn strip(word) {
+  let out = word
+  while out.len() > 0 && PUNCT.contains(out[0]) { out = out.slice(1) }
+  while out.len() > 0 && PUNCT.contains(out[-1]) { out = out.slice(0, out.len() - 1) }
+  return out
+}
+
+fn normalize(word) {
+  // «ё» и «е» в русских текстах пишут вперемешку — приводим к одному виду,
+  // иначе «растет» и «растёт» окажутся разными словами.
+  return strip(word).lower().replace("ё", "е")
+}
+
+// Текст → список пар «как в тексте / как в индексе». Переносы строк и лишние
+// пробелы схлопываются: split(" ") оставляет пустые куски, их отбрасываем.
+fn tokenize(text) {
+  let tokens = []
+  for chunk in text.replace("\n", " ").split(" ") {
+    let raw = chunk.trim()
+    if raw == "" { continue }
+    let norm = normalize(raw)
+    if norm == "" { continue }
+    tokens.push({ raw: raw, norm: norm })
+  }
+  return tokens
+}
+
+// ---- индекс ----------------------------------------------------------------
+
+// слово → { документ → список позиций }. Позиции нужны для поиска фразы:
+// без них можно найти только «оба слова где-то в тексте».
+// В индекс попадают ВСЕ слова, включая стоп-слова: иначе фраза «оплата не
+// поступила» распалась бы. Отсеиваем их не при записи, а при запросе.
+let index = {}
+let docs = {}
+
+for note in NOTES {
+  let tokens = tokenize("${note.title} ${note.text}")
+  docs.set(note.id, { title: note.title, tokens: tokens })
+
+  for i in 0..tokens.len() {
+    let word = tokens[i].norm
+    let postings = index.get(word, {})
+    let places = postings.get(note.id, [])
+    places.push(i)
+    postings.set(note.id, places)
+    index.set(word, postings)
+  }
+}
+
+let total_words = docs.values().map(d -> d.tokens.len()).reduce((a, b) -> a + b, 0)
+print("Проиндексировано: ${docs.len()} заметок, ${total_words} слов, ${index.len()} разных слов в индексе")
+
+// Длинную цепочку методов можно разложить по строкам, если взять её в скобки:
+// внутри «(…)» перенос строки ничего не заканчивает.
+let popular = (index.entries()
+  .map(e -> [e[0], e[1].values().map(p -> p.len()).reduce((a, b) -> a + b, 0)])
+  .filter(e -> e[1] > 2 && !STOP.contains(e[0]))
+  .sort((a, b) -> b[1] - a[1] != 0 ? b[1] - a[1] : (a[0] < b[0] ? -1 : 1)))
+print("Чаще всего встречаются: ${popular.map(e -> '${e[0]} (${e[1]})').join(', ')}")
+
+// ---- поиск -----------------------------------------------------------------
+
+// Документ подходит, если содержит ВСЕ слова запроса. Оценка — сумма вхождений,
+// плюс небольшая надбавка за слово в заголовке.
+fn search(query) {
+  let words = tokenize(query).map(t -> t.norm).filter(w -> !STOP.contains(w))
+  if words.len() == 0 { return [] }
+
+  let candidates = index.get(words[0], {}).keys()
+  for w in words.slice(1) {
+    let postings = index.get(w, {})
+    candidates = candidates.filter(id -> postings.has(id))
+  }
+
+  let hits = []
+  for id in candidates {
+    let score = 0
+    let first = 1e9
+    for w in words {
+      let places = index.get(w).get(id)
+      score += places.len()
+      first = min(first, places[0])
+    }
+    let title_words = tokenize(docs.get(id).title).map(t -> t.norm)
+    for w in words { if title_words.contains(w) { score += 3 } }
+    hits.push({ id: id, score: score, at: first, words: words })
+  }
+  return hits.sort((a, b) -> b.score - a.score)
+}
+
+// Точная фраза: слова должны идти подряд, то есть позиции — соседние числа.
+fn phrase_positions(id, words) {
+  if words.len() == 0 { return [] }
+  let starts = index.get(words[0], {}).get(id, [])
+  let out = []
+  for start in starts {
+    let ok = true
+    for k in 1..words.len() {
+      if !index.get(words[k], {}).get(id, []).contains(start + k) { ok = false; break }
+    }
+    if ok { out.push(start) }
+  }
+  return out
+}
+
+// ---- показ -----------------------------------------------------------------
+
+// Скобки подсветки ставим вокруг самого слова, а знаки препинания оставляем
+// снаружи: «[отметка].» читается, «[отметка.]» — уже нет.
+fn highlight(raw) {
+  let core = strip(raw)
+  if core == "" { return raw }
+  let at = raw.index_of(core)
+  return raw.slice(0, at) + "[${core}]" + raw.slice(at + core.len())
+}
+
+fn snippet(id, at, words, width) {
+  let tokens = docs.get(id).tokens
+  let from = max(0, at - 4)
+  let to = min(tokens.len(), at + 8)
+  let parts = []
+  for i in from..to {
+    let t = tokens[i]
+    parts.push(words.contains(t.norm) ? highlight(t.raw) : t.raw)
+  }
+  let text = (from > 0 ? "… " : "") + parts.join(" ") + (to < tokens.len() ? " …" : "")
+  return wrap(text, width)
+}
+
+// Перенос по словам: строка растёт, пока влезает, потом начинается новая.
+fn wrap(text, width) {
+  let lines = []
+  let line = ""
+  for word in text.split(" ") {
+    if line == "" { line = word }
+    else if line.len() + 1 + word.len() <= width { line += " " + word }
+    else { lines.push(line); line = word }
+  }
+  if line != "" { lines.push(line) }
+  return lines
+}
+
+fn report(query) {
+  print("")
+  print("Запрос: «${query}»")
+  let hits = search(query)
+  if hits.len() == 0 {
+    print("  ничего не нашлось")
+    return nil
+  }
+  for hit in hits {
+    print("  ${docs.get(hit.id).title} (вес ${hit.score})")
+    for line in snippet(hit.id, hit.at, hit.words, 66) { print("    ${line}") }
+  }
+  return nil
+}
+
+report("оплата")
+report("отметка преподавателя")
+report("заморожен ученик")
+report("миграция базы")
+
+// ---- фраза -----------------------------------------------------------------
+
+print("")
+for query in ["задним числом", "оплата не поступила", "отметку ставит директор"] {
+  let words = tokenize(query).map(t -> t.norm)
+  let found = []
+  for id in docs.keys() {
+    for at in phrase_positions(id, words) { found.push("${docs.get(id).title}, слово ${at + 1}") }
+  }
+  let where = found.len() == 0 ? "не встречается" : found.join("; ")
+  print("Фраза «${query}»: ${where}")
+}

@@ -1,0 +1,199 @@
+// Сортировки и двоичный поиск: три алгоритма на одних данных, с подсчётом сравнений.
+//
+// Заодно показано то, ради чего вообще нужны функции первого класса:
+// компаратор — это значение, его можно посчитать, обернуть и составить из кусков.
+
+// ---- воспроизводимые данные -----------------------------------------------
+
+// random() каждый раз даёт другое, а нам нужен один и тот же набор при каждом
+// запуске. Поэтому свой генератор: Лемер, тот же, что в старых стандартных
+// библиотеках. Числа остаются в безопасном для точности диапазоне.
+fn lcg(seed) {
+  let state = seed
+  return fn() {
+    state = state * 16807 % 2147483647
+    return state
+  }
+}
+
+fn sample(n, seed, top) {
+  let next = lcg(seed)
+  let out = []
+  for _ in 0..n { out.push(next() % top) }
+  return out
+}
+
+const DATA = sample(48, 20260825, 1000)
+
+print("Данные: ${DATA.slice(0, 12).join(', ')}, … (всего ${DATA.len()})")
+
+// ---- компаратор со счётчиком ----------------------------------------------
+
+// Возвращает и функцию сравнения, и «сколько раз её позвали»: счётчик живёт
+// в замыкании, поэтому его нельзя случайно обнулить снаружи.
+fn counting(cmp) {
+  let calls = 0
+  return {
+    cmp: fn(a, b) { calls += 1; return cmp(a, b) },
+    count: () -> calls,
+  }
+}
+
+const ASC = (a, b) -> a - b
+
+// ---- сортировка вставками --------------------------------------------------
+
+// O(n²), но на почти отсортированных данных — лучшая из трёх.
+fn insertion_sort(xs, cmp) {
+  let out = xs.clone()
+  for i in 1..out.len() {
+    let value = out[i]
+    let j = i - 1
+    while j >= 0 && cmp(out[j], value) > 0 {
+      out[j + 1] = out[j]
+      j -= 1
+    }
+    out[j + 1] = value
+  }
+  return out
+}
+
+// ---- сортировка слиянием ---------------------------------------------------
+
+// O(n log n) и устойчива: равные элементы сохраняют исходный порядок —
+// именно поэтому при слиянии берём левый при равенстве (`<= 0`).
+fn merge_sort(xs, cmp) {
+  if xs.len() <= 1 { return xs.clone() }
+  let middle = int(xs.len() / 2)
+  return merge(merge_sort(xs.slice(0, middle), cmp), merge_sort(xs.slice(middle), cmp), cmp)
+}
+
+fn merge(left, right, cmp) {
+  let out = []
+  let i = 0
+  let j = 0
+  while i < left.len() && j < right.len() {
+    if cmp(left[i], right[j]) <= 0 { out.push(left[i]); i += 1 }
+    else { out.push(right[j]); j += 1 }
+  }
+  while i < left.len() { out.push(left[i]); i += 1 }
+  while j < right.len() { out.push(right[j]); j += 1 }
+  return out
+}
+
+// ---- быстрая сортировка ----------------------------------------------------
+
+// Не на месте, зато видно суть: опорный элемент делит на «меньше / равно / больше».
+// Равные вынесены отдельно — иначе на данных с повторами получится O(n²).
+fn quick_sort(xs, cmp) {
+  if xs.len() <= 1 { return xs.clone() }
+  let pivot = xs[int(xs.len() / 2)]
+  let less = []
+  let same = []
+  let more = []
+  for x in xs {
+    let r = cmp(x, pivot)
+    if r < 0 { less.push(x) } else if r > 0 { more.push(x) } else { same.push(x) }
+  }
+  return quick_sort(less, cmp) + same + quick_sort(more, cmp)
+}
+
+// ---- сравнение -------------------------------------------------------------
+
+let reference = DATA.sort()      // встроенная сортировка — эталон
+
+print("")
+print("Алгоритм          сравнений   совпало с sort()")
+
+for pair in [["вставками", insertion_sort], ["слиянием", merge_sort], ["быстрая", quick_sort]] {
+  let name = pair[0]
+  let algorithm = pair[1]
+  let probe = counting(ASC)
+  let result = algorithm(DATA, probe.cmp)
+  // Списки сравниваются по содержимому, так что проверка — одно «==».
+  let same = result == reference ? "да" : "НЕТ"
+  print("  ${name.pad_end(16, ' ')} ${str(probe.count()).pad_start(6, ' ')}   ${same}")
+}
+
+// На почти отсортированных данных расклад меняется на противоположный.
+let almost = reference.clone()
+almost[3] = 999
+almost[40] = 1
+
+print("")
+print("То же, но данные почти отсортированы:")
+for pair in [["вставками", insertion_sort], ["слиянием", merge_sort], ["быстрая", quick_sort]] {
+  let probe = counting(ASC)
+  pair[1](almost, probe.cmp)
+  print("  ${pair[0].pad_end(16, ' ')} ${str(probe.count()).pad_start(6, ' ')}")
+}
+
+// ---- двоичный поиск --------------------------------------------------------
+
+// Возвращает первую позицию, куда можно вставить значение, не нарушив порядок.
+// Через неё выражаются и «найти», и «вставить», и «сколько меньше данного».
+fn lower_bound(sorted, value, cmp) {
+  let lo = 0
+  let hi = sorted.len()
+  while lo < hi {
+    let mid = int((lo + hi) / 2)
+    if cmp(sorted[mid], value) < 0 { lo = mid + 1 } else { hi = mid }
+  }
+  return lo
+}
+
+fn binary_search(sorted, value, cmp) {
+  let at = lower_bound(sorted, value, cmp)
+  return at < sorted.len() && cmp(sorted[at], value) == 0 ? at : -1
+}
+
+print("")
+let probe = counting(ASC)
+let needle = reference[30]
+let at = binary_search(reference, needle, probe.cmp)
+print("Двоичный поиск ${needle}: индекс ${at}, сравнений ${probe.count()} (перебором было бы до ${reference.len()})")
+print("Отсутствующего 1001: индекс ${binary_search(reference, 1001, ASC)}")
+print("Меньше 500 в списке: ${lower_bound(reference, 500, ASC)} чисел из ${reference.len()}")
+
+// Вставка с сохранением порядка — то, ради чего lower_bound и писался.
+let ordered = [10, 20, 30, 40]
+ordered.insert(lower_bound(ordered, 25, ASC), 25)
+print("После вставки 25: ${ordered}")
+
+// ---- сортировка по нескольким ключам ---------------------------------------
+
+struct Teacher { name, subject, groups, rating }
+
+const TEACHERS = [
+  Teacher("Азиза", "английский", 4, 4.8),
+  Teacher("Бекзод", "математика", 6, 4.5),
+  Teacher("Дилноза", "английский", 4, 4.9),
+  Teacher("Гулнора", "математика", 6, 4.9),
+  Teacher("Жасур", "английский", 2, 4.5),
+]
+
+// Компараторы собираются из кусочков: by() делает сравнение по одному полю,
+// desc() переворачивает, chain() применяет следующий только при ничьей.
+fn by(key) { return (a, b) -> key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0 }
+fn desc(cmp) { return (a, b) -> -cmp(a, b) }
+fn chain(comparators) {
+  return fn(a, b) {
+    for cmp in comparators {
+      let r = cmp(a, b)
+      if r != 0 { return r }
+    }
+    return 0
+  }
+}
+
+let ranking = chain([
+  by(t -> t.subject),
+  desc(by(t -> t.rating)),
+  by(t -> t.name),
+])
+
+print("")
+print("Преподаватели: предмет ↑, рейтинг ↓, имя ↑")
+for t in TEACHERS.sort(ranking) {
+  print("  ${t.subject.pad_end(12, ' ')} ${str(t.rating)} ${t.name.pad_end(9, ' ')} групп: ${t.groups}")
+}
