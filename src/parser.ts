@@ -256,11 +256,21 @@ export class Parser {
 
     const fields: Param[] = [];
     const methods: Array<{ name: string; params: Param[]; body: Stmt[]; span: Span }> = [];
+    // Повтор имени в структуре молча терял значение: `struct P { x, x }`
+    // требовал два аргумента, а поле оставалось одно. У функций такое
+    // ловится с самого начала — здесь проверки не было.
+    const занято = new Map<string, string>();
+    const занять = (name: string, что: string, at: Span): void => {
+      const было = занято.get(name);
+      if (было) throw parseError(`«${name}» в структуре уже объявлено как ${было}`, at);
+      занято.set(name, что);
+    };
 
     while (!this.check('RBRACE') && !this.atEnd()) {
       if (this.check('FN')) {
         const fkw = this.advance();
         const mName = this.expect('IDENT', 'имя метода');
+        занять(String(mName.value), 'метод', mName.span);
         methods.push({
           name: String(mName.value),
           params: this.params(),
@@ -269,6 +279,7 @@ export class Parser {
         });
       } else {
         const f = this.expect('IDENT', 'имя поля или «fn» для метода');
+        занять(String(f.value), 'поле', f.span);
         const def = this.match('ASSIGN') ? this.expression() : null;
         fields.push({ name: String(f.value), def });
       }
