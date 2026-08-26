@@ -161,7 +161,7 @@ export class Lexer {
       raw += this.advance();
       while (isHex(this.peek()) || this.peek() === '_') raw += this.advance();
       const value = Number.parseInt(raw.replace(/_/g, ''), 16);
-      if (Number.isNaN(value)) throw lexError(`некорректное шестнадцатеричное число «${raw}»`, span);
+      if (!Number.isFinite(value)) throw lexError(`некорректное или слишком большое шестнадцатеричное число «${raw}»`, span);
       return this.push('NUMBER', raw, span, { value });
     }
     while (isDigit(this.peek()) || this.peek() === '_') raw += this.advance();
@@ -182,7 +182,9 @@ export class Lexer {
       }
     }
     const value = Number(raw.replace(/_/g, ''));
-    if (Number.isNaN(value)) throw lexError(`некорректное число «${raw}»`, span);
+    // Не просто NaN: `1e999` даёт inf, а бесконечности в языке нет — иначе она
+    // расползлась бы по программе и всплыла в JSON как null.
+    if (!Number.isFinite(value)) throw lexError(`число «${raw}» слишком велико для языка`, span);
     this.push('NUMBER', raw, span, { value });
   }
 
@@ -229,8 +231,16 @@ export class Lexer {
             let hex = '';
             while (this.peek() !== '}' && this.pos < this.src.length) hex += this.advance();
             if (!this.match('}')) throw lexError('escape \\u{...} не закрыт', span);
+            // parseInt глотает хвост: «41zz» дал бы «A» молча. Проверяем запись целиком.
+            if (!/^[0-9A-Fa-f]+$/.test(hex)) {
+              throw lexError(`некорректный код символа «${hex}» — ожидались шестнадцатеричные цифры`, span);
+            }
             const code = Number.parseInt(hex, 16);
-            if (Number.isNaN(code)) throw lexError(`некорректный код символа «${hex}»`, span);
+            // Верхняя граница Unicode. Без неё String.fromCodePoint бросал свой
+            // RangeError, и наружу вылезал стек JavaScript вместо ошибки языка.
+            if (code > 0x10FFFF) {
+              throw lexError(`код символа «${hex}» больше предельного 10FFFF`, span);
+            }
             text += String.fromCodePoint(code);
             break;
           }
