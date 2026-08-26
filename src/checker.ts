@@ -200,8 +200,14 @@ class Checker {
   private statement(stmt: Stmt): void {
     switch (stmt.kind) {
       case 'Import':
-        // Что лежит внутри модуля, статически неизвестно — проверяем только само имя.
-        this.define(stmt.alias, stmt.span, 'const', false, false);
+        // Что лежит внутри модуля, статически неизвестно — проверяем только имена.
+        // Выборочный импорт объявляет каждое взятое имя: без этого обращение к нему
+        // читалось бы как «имя не определено», а повторный импорт молчал бы.
+        if (stmt.names !== null) {
+          for (const n of stmt.names) this.define(n.alias, n.span, 'const', false, false);
+        } else {
+          this.define(stmt.alias, stmt.span, 'const', false, false);
+        }
         return;
 
       case 'ExprStmt':

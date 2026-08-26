@@ -548,7 +548,23 @@ class Formatter {
 
       case 'Break': this.push('break'); return;
       case 'Continue': this.push('continue'); return;
-      case 'Import': this.push(`import ${quote(s.path)} as ${s.alias}`); return;
+      case 'Import': {
+        if (s.names === null) { this.push(`import ${quote(s.path)} as ${s.alias}`); return; }
+        // Список имён переносится по тем же правилам, что список значений:
+        // одной строкой, пока влезает, иначе с заполнением строк — имена
+        // коротки и однородны, столбец из них читается хуже.
+        const prefix = `import ${quote(s.path)} as `;
+        const names = s.names;
+        this.push(prefix + this.group(
+          '{', '}', names.length,
+          (k) => {
+            const n = names[k]!;
+            return n.alias === n.name ? n.name : `${n.name} as ${n.alias}`;
+          },
+          this.column(prefix.length), this.ind, false, true,
+        ));
+        return;
+      }
 
       case 'Block': {
         const close = this.closeOfBrace(this.offset(s.span));
