@@ -7,7 +7,7 @@ import {
   type Shape,
 } from './environment.ts';
 import { ModuleLoader } from './modules.ts';
-import { findMethodEntry, getMethod, installGlobals, repeatText, type MethodEntry } from './stdlib.ts';
+import { findMethodEntry, getMethod, installGlobals, methodNames, repeatText, type MethodEntry } from './stdlib.ts';
 import {
   SableModule, NativeFn, SableFunction, SableRange, StructDef, StructInstance,
   type CompiledFn,
@@ -1012,7 +1012,10 @@ export class Interpreter {
       if (field !== undefined) return field;
       const m = obj.def.methods.get(name);
       if (m) return m.bind(obj);
-      throw runtimeError(`у ${obj.def.name} нет поля или метода «${name}»`, span);
+      throw runtimeError(
+        `у ${obj.def.name} нет поля или метода «${name}»${hint(name, [...obj.fields.keys(), ...obj.def.methods.keys()])}`,
+        span,
+      );
     }
 
     if (obj instanceof Map) {
@@ -1035,9 +1038,16 @@ export class Interpreter {
     if (method) return method;
 
     if (obj instanceof Map) {
-      throw runtimeError(`в словаре нет ключа «${name}» и нет такого метода`, span);
+      throw runtimeError(
+        `в словаре нет ключа «${name}» и нет такого метода` +
+        hint(name, [...[...obj.keys()].filter((k) => typeof k === 'string'), ...methodNames(obj)]),
+        span,
+      );
     }
-    throw runtimeError(`у значения типа ${typeName(obj)} нет поля или метода «${name}»`, span);
+    throw runtimeError(
+      `у значения типа ${typeName(obj)} нет поля или метода «${name}»${hint(name, methodNames(obj))}`,
+      span,
+    );
   }
 
   private listIndex(list: Value[], key: Value, span: Span): number {
@@ -1263,6 +1273,12 @@ function missingExport(path: string, name: string, exports: Map<string, Value>, 
     `в модуле «${path}» нет имени «${name}»${near ? ` — возможно, имелось в виду «${near}»` : ''}`,
     span,
   );
+}
+
+/** Готовая приписка «возможно, имелось в виду» — или пустая строка. */
+function hint(name: string, known: string[]): string {
+  const near = nearest(name, known);
+  return near ? ` — возможно, имелось в виду «${near}»` : '';
 }
 
 /** Ближайшее по написанию имя — для подсказки «возможно, имелось в виду». */

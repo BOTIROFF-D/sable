@@ -879,6 +879,14 @@ export type MethodEntry = {
  * Нужна для `значение.метод(...)`: там результат «привязки» живёт ровно
  * до вызова, и выделять под него объект незачем.
  */
+/** Имена методов, доступных значению — для подсказок про опечатку. */
+export function methodNames(obj: Value): string[] {
+  for (const [matches, table] of TABLES) {
+    if (matches(obj)) return Object.keys(table);
+  }
+  return [];
+}
+
 export function findMethodEntry(obj: Value, name: string): MethodEntry | null {
   for (const [matches, table] of TABLES) {
     if (matches(obj)) return table[name] ?? null;
