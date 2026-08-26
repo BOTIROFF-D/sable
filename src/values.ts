@@ -176,22 +176,42 @@ export const truthy = (v: Value): boolean => v !== false && v !== null;
 export const isCallable = (v: Value): boolean =>
   v instanceof SableFunction || v instanceof NativeFn || v instanceof StructDef;
 
-export function equals(a: Value, b: Value): boolean {
+/**
+ * Пары значений, которые сравниваются прямо сейчас.
+ *
+ * Структуры вправе ссылаться друг на друга — двусвязный список, дерево со
+ * ссылкой на родителя, граф соседей. Без этой памяти сравнение двух таких
+ * узлов уходило в бесконечную рекурсию и роняло стек JS.
+ *
+ * Пара, встреченная повторно, считается равной: если что-то в глубине их
+ * различает, это различие найдётся на другой ветке обхода.
+ */
+export function equals(a: Value, b: Value, seen?: Map<object, Set<object>>): boolean {
   if (a === b) return true;
   if (typeof a === 'number' && typeof b === 'number') return a === b;
+
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+    const memo = seen ?? new Map<object, Set<object>>();
+    const already = memo.get(a);
+    if (already?.has(b)) return true;
+    if (already) already.add(b);
+    else memo.set(a, new Set([b as object]));
+    seen = memo;
+  }
+
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return false;
     // Обход по индексу, а не every: every пропускает пустые ячейки, и тогда
     // равенство переставало быть симметричным — «a == b» истинно, «b == a» нет.
     for (let i = 0; i < a.length; i++) {
-      if (!equals(a[i] ?? null, b[i] ?? null)) return false;
+      if (!equals(a[i] ?? null, b[i] ?? null, seen)) return false;
     }
     return true;
   }
   if (a instanceof Map && b instanceof Map) {
     if (a.size !== b.size) return false;
     for (const [k, v] of a) {
-      if (!b.has(k) || !equals(v, b.get(k)!)) return false;
+      if (!b.has(k) || !equals(v, b.get(k)!, seen)) return false;
     }
     return true;
   }
@@ -199,7 +219,7 @@ export function equals(a: Value, b: Value): boolean {
   if (a instanceof StructInstance && b instanceof StructInstance) {
     if (a.def !== b.def) return false;
     for (const [k, v] of a.fields) {
-      if (!equals(v, b.fields.get(k) ?? null)) return false;
+      if (!equals(v, b.fields.get(k) ?? null, seen)) return false;
     }
     return true;
   }

@@ -111,7 +111,9 @@ export function installGlobals(interp: Interpreter): void {
     if (typeof v === 'string') {
       const t = v.trim().replace(/_/g, '');
       const n = t === '' ? NaN : Number(t);
-      if (Number.isNaN(n)) {
+      // Бесконечность отсекается наравне с мусором: «Infinity» и «1e999» —
+      // такие же непредставимые в языке значения, как «привет».
+      if (!Number.isFinite(n)) {
         if (args.length > 1) return arg(args, 1);
         throw runtimeError(`строку ${repr(v)} нельзя разобрать как число — передайте вторым аргументом запасное значение`, span);
       }
@@ -255,7 +257,7 @@ export function installGlobals(interp: Interpreter): void {
   def('from_json', 1, 1, (args, span) => {
     const text = wantString('from_json', args, 0, span);
     try {
-      return fromPlain(JSON.parse(text));
+      return fromPlain(JSON.parse(text), span);
     } catch (e) {
       if (e instanceof SableError) throw e;
       throw runtimeError('строка не является корректным JSON', span);
@@ -377,30 +379,48 @@ function lengthOf(v: Value, span: Span): number {
   throw runtimeError(`у значения типа ${typeName(v)} нет длины`, span);
 }
 
-function toPlain(v: Value, span: Span): unknown {
+function toPlain(v: Value, span: Span, seen: Set<object> = new Set()): unknown {
+  // Список или структура вправе ссылаться на себя. Без этой памяти обход уходил
+  // в бесконечную рекурсию и роняло стек JS — то есть вместо ошибки языка
+  // пользователь видел чужое сообщение про вложенность вычислений.
+  if (typeof v === 'object' && v !== null) {
+    if (seen.has(v)) throw runtimeError('значение ссылается само на себя — в JSON его не записать', span);
+    seen.add(v);
+  }
+  const out = toPlainInner(v, span, seen);
+  if (typeof v === 'object' && v !== null) seen.delete(v);
+  return out;
+}
+
+function toPlainInner(v: Value, span: Span, seen: Set<object>): unknown {
   if (v === null || typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return v;
-  if (Array.isArray(v)) return v.map((x) => toPlain(x, span));
-  if (v instanceof SableRange) return v.toList().map((x) => toPlain(x, span));
+  if (Array.isArray(v)) return v.map((x) => toPlain(x, span, seen));
+  if (v instanceof SableRange) return v.toList().map((x) => toPlain(x, span, seen));
   if (v instanceof Map) {
     const o: Record<string, unknown> = {};
-    for (const [k, val] of v) o[String(k)] = toPlain(val, span);
+    for (const [k, val] of v) o[String(k)] = toPlain(val, span, seen);
     return o;
   }
   if (v instanceof StructInstance) {
     const o: Record<string, unknown> = {};
-    for (const [k, val] of v.fields) o[k] = toPlain(val, span);
+    for (const [k, val] of v.fields) o[k] = toPlain(val, span, seen);
     return o;
   }
   throw runtimeError(`значение типа ${typeName(v)} нельзя превратить в JSON`, span);
 }
 
-function fromPlain(v: unknown): Value {
+function fromPlain(v: unknown, span: Span): Value {
   if (v === null) return null;
-  if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') return v;
-  if (Array.isArray(v)) return v.map(fromPlain);
+  if (typeof v === 'number') {
+    // JSON умеет записать 1e999; в языке такого числа нет.
+    if (!Number.isFinite(v)) throw runtimeError(`в JSON встретилось слишком большое число: ${v}`, span);
+    return v;
+  }
+  if (typeof v === 'string' || typeof v === 'boolean') return v;
+  if (Array.isArray(v)) return v.map((x) => fromPlain(x, span));
   if (typeof v === 'object') {
     const m = new Map<MapKey, Value>();
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) m.set(k, fromPlain(val));
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) m.set(k, fromPlain(val, span));
     return m;
   }
   return null;
