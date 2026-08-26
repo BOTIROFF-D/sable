@@ -398,7 +398,14 @@ function toPlainInner(v: Value, span: Span, seen: Set<object>): unknown {
   if (v instanceof SableRange) return v.toList().map((x) => toPlain(x, span, seen));
   if (v instanceof Map) {
     const o: Record<string, unknown> = {};
-    for (const [k, val] of v) o[String(k)] = toPlain(val, span, seen);
+    for (const [k, val] of v) {
+      // Ключи 1 и "1" в JSON неразличимы. Молча терять одну из записей нельзя.
+      const name = String(k);
+      if (Object.hasOwn(o, name)) {
+        throw runtimeError(`ключи ${repr(k as Value)} и «${name}» в JSON неразличимы — запись потерялась бы`, span);
+      }
+      o[name] = toPlain(val, span, seen);
+    }
     return o;
   }
   if (v instanceof StructInstance) {
@@ -486,10 +493,11 @@ const STRING_METHODS: MethodTable = {
     if (n < 0) throw runtimeError('число повторов не может быть отрицательным', sp);
     return repeatText(s, n, sp);
   }),
-  pad_start: m(1, 2, (s: string, a, sp) =>
-    s.padStart(wantInt('pad_start', a, 0, sp), a.length > 1 ? wantString('pad_start', a, 1, sp) : ' ')),
-  pad_end: m(1, 2, (s: string, a, sp) =>
-    s.padEnd(wantInt('pad_end', a, 0, sp), a.length > 1 ? wantString('pad_end', a, 1, sp) : ' ')),
+  // Дополнение считается в символах, как len и slice. По кодовым единицам
+  // UTF-16 колонки разъезжались ровно там, ради чего эти методы и нужны:
+  // «😀бот» занимал на клетку меньше, чем «Гулноз».
+  pad_start: m(1, 2, (s: string, a, sp) => padText(s, a, sp, 'pad_start', true)),
+  pad_end: m(1, 2, (s: string, a, sp) => padText(s, a, sp, 'pad_end', false)),
   is_empty: m(0, 0, (s: string) => s.length === 0),
   trim_start: m(0, 0, (s: string) => s.trimStart()),
   trim_end: m(0, 0, (s: string) => s.trimEnd()),
@@ -535,8 +543,11 @@ const LIST_METHODS: MethodTable = {
   }),
   insert: m(2, 2, (l: Value[], a, sp) => {
     const i = wantInt('insert', a, 0, sp);
-    if (i < 0 || i > l.length) throw runtimeError(`позиция ${i} вне списка длиной ${l.length}`, sp);
-    l.splice(i, 0, a[1]!);
+    // Отрицательная позиция считается с конца — как у remove_at и у xs[-1].
+    // Раньше insert был единственным исключением из общего правила.
+    const at = i < 0 ? l.length + i : i;
+    if (at < 0 || at > l.length) throw runtimeError(`позиция ${i} вне списка длиной ${l.length}`, sp);
+    l.splice(at, 0, a[1]!);
     return l as Value;
   }),
   remove_at: m(1, 1, (l: Value[], a, sp) => {
@@ -689,7 +700,7 @@ const LIST_METHODS: MethodTable = {
       if (!Array.isArray(part)) {
         throw runtimeError(`функция в «flat_map» должна вернуть список, а вернула ${typeName(part)} — оберните значение в [ ]`, sp);
       }
-      out.push(...part);
+      for (const item of part) out.push(item);
     });
     return out;
   }),
@@ -770,7 +781,9 @@ const RANGE_METHODS: MethodTable = {
   list: m(0, 0, (r: SableRange) => r.toList()),
   contains: m(1, 1, (r: SableRange, a, sp) => {
     const n = wantNumber('contains', a, 0, sp);
-    return n >= r.start && n < r.end;
+    // Спрашивают про элемент последовательности, а не про попадание в отрезок:
+    // 0..5 — это [0, 1, 2, 3, 4], и 2.5 в него не входит.
+    return n >= r.start && n < r.end && Number.isInteger(n - r.start);
   }),
 };
 
@@ -788,6 +801,19 @@ export function repeatText(s: string, n: number, span: Span): string {
     );
   }
   return s.repeat(n);
+}
+
+/** Дополнение строки до нужной длины в символах. */
+function padText(s: string, args: Value[], span: Span, fn: string, atStart: boolean): string {
+  const want = wantInt(fn, args, 0, span);
+  const fill = args.length > 1 ? wantString(fn, args, 1, span) : ' ';
+  const chars = [...s];
+  if (chars.length >= want || fill === '') return s;
+  const padChars = [...fill];
+  const need = want - chars.length;
+  let pad = '';
+  for (let i = 0; i < need; i++) pad += padChars[i % padChars.length];
+  return atStart ? pad + s : s + pad;
 }
 
 function sliceBounds(fn: string, length: number, args: Value[], span: Span): [number, number] {

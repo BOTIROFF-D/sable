@@ -964,7 +964,10 @@ export class Interpreter {
           );
         }
         const out: Value[] = [];
-        for (let i = 0; i < n; i++) out.push(...l);
+        // Не спредом: он упирается в предел числа аргументов около 125 тысяч,
+        // и до честной проверки MAX_LIST дело не доходило — вместо неё
+        // выпадало чужое сообщение про вложенность вычислений.
+        for (let i = 0; i < n; i++) for (const item of l) out.push(item);
         return out;
       }
     }
