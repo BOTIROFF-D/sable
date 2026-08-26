@@ -194,7 +194,7 @@ export class Interpreter {
    * Но не всякий RangeError об этом: «строка слишком длинная» — тоже RangeError,
    * и выдавать её за глубокую вложенность значит врать пользователю.
    */
-  private decorate(e: unknown): unknown {
+  decorate(e: unknown): unknown {
     if (e instanceof RangeError) {
       return /call stack/i.test(e.message)
         ? runtimeError('слишком глубокая вложенность вычислений')
@@ -539,7 +539,11 @@ export class Interpreter {
       const depthBefore = this.depth;
       try {
         return body(bodyShape === null ? env : new Environment(env, false, bodyShape));
-      } catch (e) {
+      } catch (raw) {
+        // Срыв стека JS — это тоже ошибка выполнения программы, и справочник
+        // обещает, что ошибки выполнения ловятся. Без перевода она пролетала
+        // мимо catch, и программа умирала внутри try.
+        const e = raw instanceof RangeError ? this.decorate(raw) : raw;
         if (!(e instanceof SableError) || e.stage !== 'runtime') throw e;
         // Кадры вызовов, оборванных ошибкой, снимаем — обработчик выполняется на своём уровне.
         this.depth = depthBefore;
@@ -1078,8 +1082,18 @@ export class Interpreter {
     }
 
     if (obj instanceof SableRange) {
-      const list = obj.toList();
-      return list[this.listIndex(list, key, span)]!;
+      // Считаем элемент, а не разворачиваем диапазон: `(0..1000000000)[0]`
+      // иначе съедал бы всю память ради одного числа. Диапазон обещан ленивым,
+      // и индексация — единственное место, где это обещание нарушалось.
+      if (typeof key !== 'number' || !Number.isInteger(key)) {
+        throw runtimeError(`индекс диапазона должен быть целым числом, а получен ${typeName(key)}`, span);
+      }
+      const size = obj.length;
+      const at = key < 0 ? size + key : key;
+      if (at < 0 || at >= size) {
+        throw runtimeError(`индекс ${key} вне диапазона длиной ${size}`, span);
+      }
+      return obj.start + at;
     }
 
     if (obj === null) throw runtimeError('нельзя взять элемент по индексу у nil', span);
