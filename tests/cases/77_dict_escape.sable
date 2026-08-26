@@ -1,0 +1,18 @@
+// Ключ с именем метода закрывает метод — данные у словаря важнее. Для случая,
+// когда данные пришли снаружи, есть свободные функции.
+let u = { get: "поле", set: 1, has: true, remove: "x", len: 0, имя: "Ali" }
+
+print(u.get, u.set, u.has, u.len)
+print(get(u, "имя"), get(u, "нет", "запас"), has(u, "get"), has(u, "нет"), len(u))
+
+set(u, "новый", 5)
+print(get(u, "новый"), remove(u, "новый"), has(u, "новый"))
+print(keys(u).len(), values(u).len(), entries(u).len())
+
+// на обычном словаре методы работают как прежде
+let обычный = { a: 1, b: 2 }
+print(обычный.get("a"), обычный.has("b"), обычный.keys())
+
+// find возвращает nil и когда не нашёл, и когда нашёл nil — find_index однозначен
+print([nil, 1].find(x -> x == nil), [1, 2].find(x -> x == 99))
+print([nil, 1].find_index(x -> x == nil), [1, 2].find_index(x -> x == 99))

@@ -214,6 +214,29 @@ export function installGlobals(interp: Interpreter): void {
     return out;
   });
 
+  // Ключ с именем метода закрывает метод навсегда: у словаря данные важнее.
+  // Эти четыре — обход для случая, когда данные пришли снаружи (JSON от чужого
+  // API вполне содержит ключи get и set), а работать со словарём всё равно надо.
+  def('get', 2, 3, (args, span) => {
+    const mp = asMap('get', arg(args, 0), span);
+    const k = asMapKey(arg(args, 1), span);
+    const held = mp.get(k);
+    return held !== undefined ? held : args.length > 2 ? arg(args, 2) : null;
+  });
+  def('set', 3, 3, (args, span) => {
+    const mp = asMap('set', arg(args, 0), span);
+    mp.set(asMapKey(arg(args, 1), span), arg(args, 2));
+    return mp;
+  });
+  def('has', 2, 2, (args, span) => asMap('has', arg(args, 0), span).has(asMapKey(arg(args, 1), span)));
+  def('remove', 2, 2, (args, span) => {
+    const mp = asMap('remove', arg(args, 0), span);
+    const k = asMapKey(arg(args, 1), span);
+    const held = mp.get(k) ?? null;
+    mp.delete(k);
+    return held;
+  });
+
   def('keys', 1, 1, (args, span) => [...asMap('keys', arg(args, 0), span).keys()] as Value[]);
   def('values', 1, 1, (args, span) => [...asMap('values', arg(args, 0), span).values()]);
   def('entries', 1, 1, (args, span) =>
@@ -570,6 +593,10 @@ const LIST_METHODS: MethodTable = {
   map: m(1, 1, (l: Value[], a, sp, it) => snap(l).map((x, i) => it.callCallback(a[0]!, [x, i], sp, 'map'))),
   filter: m(1, 1, (l: Value[], a, sp, it) => snap(l).filter((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'filter')))),
   find: m(1, 1, (l: Value[], a, sp, it) => snap(l).find((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'find'))) ?? null),
+  // find возвращает nil и когда не нашёл, и когда нашёл nil. Язык принципиально
+  // не отдаёт молчаливый nil, поэтому для однозначного ответа есть find_index.
+  find_index: m(1, 1, (l: Value[], a, sp, it) =>
+    snap(l).findIndex((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'find_index')))),
   any: m(1, 1, (l: Value[], a, sp, it) => snap(l).some((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'any')))),
   all: m(1, 1, (l: Value[], a, sp, it) => snap(l).every((x, i) => truthy(it.callCallback(a[0]!, [x, i], sp, 'all')))),
   reduce: m(2, 2, (l: Value[], a, sp, it) => {
