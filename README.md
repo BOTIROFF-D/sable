@@ -33,6 +33,7 @@ print(fib(20))
 
 **[Try it in the browser](https://botiroff-d.github.io/sable/)** — no install, runs
 the same interpreter compiled for the web.
+**[Full English documentation](docs/en/)** — language reference and internals.
 
 ```bash
 node src/cli.ts examples/01_hello.sable   # run a file
