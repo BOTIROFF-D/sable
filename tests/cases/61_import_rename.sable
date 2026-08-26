@@ -1,0 +1,5 @@
+// Переименование на входе: чужое имя ложится под своим
+import "lib/greet.sable" as { удвоить as double, Метка as Tag }
+
+print(double(4))
+print(Tag("тише").громко())

@@ -1,0 +1,5 @@
+Ошибка выполнения: в модуле «lib/greet.sable» нет имени «удвоит» — возможно, имелось в виду «удвоить»
+  --> 64_err_import_missing_name.sable:2:39
+  |
+2 | import "lib/greet.sable" as { привет, удвоит }
+  |                                       ^

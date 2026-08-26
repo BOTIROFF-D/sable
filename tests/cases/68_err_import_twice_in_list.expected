@@ -1,0 +1,5 @@
+Ошибка синтаксиса: имя «привет» указано в списке дважды
+  --> 68_err_import_twice_in_list.sable:1:39
+  |
+1 | import "lib/greet.sable" as { привет, привет }
+  |                                       ^

@@ -1,0 +1,5 @@
+// Второй импорт занимает уже занятое имя
+import "lib/greet.sable" as { привет }
+import "lib/greet.sable" as { удвоить as привет }
+
+print(привет)
