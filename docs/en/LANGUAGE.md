@@ -153,7 +153,10 @@ A negative index counts from the end. Going out of bounds is an error, not
 
 **Mutate the list:** `push(…)` `pop()` `insert(i, v)` `remove_at(i)`
 **Return a new one:** `sort(cmp?)` `reverse()` `slice(from, to?)` `clone()` `map(f)` `filter(f)`
-**Answer a question:** `len()` `first()` `last()` `contains(v)` `index_of(v)` `find(f)` `any(f)` `all(f)` `reduce(f, initial)` `join(sep?)`
+**Answer a question:** `len()` `first()` `last()` `contains(v)` `index_of(v)` `find(f)` `find_index(f)` `any(f)` `all(f)` `reduce(f, initial)` `join(sep?)`
+
+`find` returns `nil` both when nothing matched and when the match itself was `nil`.
+When the difference matters, use `find_index` — it returns a position or `-1`.
 
 ```sable
 let names = ["Vali", "Ali", "Gulnoz"]
@@ -192,7 +195,16 @@ brackets: `{ [variable]: 1 }`.
 
 Dot access looks for **data** first and only then for a method — so that `u.name`
 works no matter what the methods happen to be called. If a piece of data and a
-method share a name, call the method as a free function: `keys(u)`, `len(u)`.
+method share a name, the data wins and the method becomes unreachable.
+
+For that case there are free functions: `len(u)`, `keys(u)`, `values(u)`,
+`entries(u)`, `get(u, key, fallback?)`, `set(u, key, value)`, `has(u, key)`,
+`remove(u, key)`. Eight are enough to work with a dictionary whose keys came from
+outside — JSON from someone else's API does contain keys named `get` and `set`.
+
+The remaining methods (`clone`, `merge`, `pick`, `omit`, `map_values`, `filter`,
+`is_empty`, `get_or_insert`) are still shadowed by a key of the same name; work
+around it with `keys` and `get`.
 
 `u["missing"]` for an absent key is an error; `u.get("missing", fallback)` is not.
 
