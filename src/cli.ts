@@ -417,4 +417,17 @@ async function main(): Promise<number> {
   return runFile(args[0]!);
 }
 
+/**
+ * Получатель вывода вправе закрыть канал раньше нас: `sable program.sable | head`
+ * читает первые строки и уходит. Без этого обработчика Node роняет наружу
+ * необработанное событие ошибки — то есть свой стек вместо тихого выхода,
+ * а стек JavaScript пользователю Sable видеть незачем.
+ */
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (e: NodeJS.ErrnoException) => {
+    if (e.code === 'EPIPE') process.exit(0);
+    throw e;
+  });
+}
+
 main().then((code) => { process.exitCode = code; });
