@@ -56,7 +56,12 @@ type Scope = { names: Map<string, Binding>; parent: Scope | null };
  * Проверить программу. `globals` — имена встроенных функций: они лежат в той же
  * области, что и объявления верхнего уровня, ровно как в интерпретаторе.
  */
-export function check(program: Program, globals: Iterable<string>): Diagnostic[] {
+/**
+ * `globals` — встроенные имена. Если передать значения, а не только имена,
+ * проверка узнаёт и число аргументов: у каждой встроенной функции оно записано
+ * там же, и выбрасывать его на входе значило не выполнять обещание справочника.
+ */
+export function check(program: Program, globals: Iterable<string | [string, Arity]>): Diagnostic[] {
   return new Checker(globals).run(program);
 }
 
@@ -74,18 +79,19 @@ class Checker {
   /** Имена, которым где-то в программе присваивают: их тип считать известным нельзя. */
   private reassigned = new Set<string>();
 
-  constructor(globals: Iterable<string>) {
+  constructor(globals: Iterable<string | [string, Arity]>) {
     // Встроенные имена лежат в отдельной внешней области — как в интерпретаторе.
     // Поэтому `let sum = 0` не «уже объявлено», а законное затенение.
     const builtins: Scope = { names: new Map(), parent: null };
     this.scope = { names: new Map(), parent: builtins };
     this.topScope = this.scope;
     const nowhere: Span = { line: 0, col: 0, file: '<встроенное>' };
-    for (const name of globals) {
+    for (const entry of globals) {
+      const [name, arity] = typeof entry === 'string' ? [entry, null] : entry;
       builtins.names.set(name, {
         name, span: nowhere, kind: 'global',
         mutable: false, warnUnused: false, used: true,
-        arity: null, struct: null, instance: null,
+        arity, struct: null, instance: null,
       });
     }
   }

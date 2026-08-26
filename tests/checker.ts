@@ -6,10 +6,17 @@
 // столько же, сколько ловящих.
 import { tokenize } from '../src/lexer.ts';
 import { parse } from '../src/parser.ts';
+import { Interpreter } from '../src/interpreter.ts';
+import { NativeFn } from '../src/values.ts';
 import { check, type Diagnostic } from '../src/checker.ts';
 
 /** Набор встроенных имён передаётся явно — проверка ничего не знает про stdlib. */
-const GLOBALS = ['print', 'write', 'len', 'str', 'type', 'sqrt', 'round', 'range', 'error', 'assert', 'sum'];
+// Настоящий список встроенных имён вместе с числом аргументов — тот же, что
+// получает проверка при запуске. Свой захардкоженный список устаревал бы молча.
+const GLOBALS: Array<string | [string, { name: string; min: number; max: number }]> = [];
+for (const [name, value] of new Interpreter({ write: () => {} }).builtins.ownEntries()) {
+  GLOBALS.push(value instanceof NativeFn ? [name, { name, min: value.minArgs, max: value.maxArgs }] : name);
+}
 
 type Expect = { severity: 'error' | 'warning'; line: number; col: number; match: string };
 type Case = { name: string; source: string; expect: Expect[] };
@@ -97,6 +104,18 @@ print(p.x, p.y, p.сумма(), p.сумма(3))`,
 let p = Точка(1)
 p = {что: "угодно"}
 print(p.что)`,
+    expect: [],
+  },
+
+  {
+    name: '0) неверное число аргументов у встроенной функции — ловим',
+    source: `print(len())`,
+    expect: [{ severity: 'error', line: 1, col: 10, match: '«len» ожидает 1 аргумент, а получает 0' }],
+  },
+  {
+    name: '0) встроенная с переменным числом аргументов — не ложное срабатывание',
+    source: `print(1, 2, 3)
+print(max(1, 2, 3), min([4, 5]), round(2.5), round(2.567, 2))`,
     expect: [],
   },
 

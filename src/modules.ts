@@ -3,7 +3,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { registerSource, runtimeError, shortPath, type Span } from './errors.ts';
 import type { Interpreter } from './interpreter.ts';
 import { tokenize } from './lexer.ts';
-import { parse } from './parser.ts';
+import { parseAll } from './parser.ts';
 import { SableModule, type Value } from './values.ts';
 
 /**
@@ -59,7 +59,11 @@ export class ModuleLoader {
 
     this.loading.push(full);
     try {
-      const program = parse(tokenize(source, shown), shown);
+      // Разбор с продолжением, как и для главного файла: справочник обещает
+      // все синтаксические ошибки сразу, и модуль — не исключение.
+      const parsed = parseAll(tokenize(source, shown), shown);
+      if (parsed.errors.length > 0) throw parsed.errors[0]!;
+      const program = parsed.program;
       const exports = interp.runModule(program, full);
       this.cache.set(full, exports);
       return { shown, exports };

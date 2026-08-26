@@ -7,6 +7,7 @@ import { check } from './checker.ts';
 import { format } from './format.ts';
 import { SableError, formatAt, formatError, formatErrors, registerSource, shortPath } from './errors.ts';
 import { Interpreter } from './interpreter.ts';
+import { NativeFn } from './values.ts';
 import { tokenize } from './lexer.ts';
 import { parse, parseAll } from './parser.ts';
 import { repr, type Value } from './values.ts';
@@ -67,7 +68,13 @@ function checkFile(path: string): number {
 
   // Интерпретатор создаётся только ради списка встроенных имён — программа не выполняется.
   const interp = new Interpreter({ write: () => {} }, full);
-  const diags = check(program, interp.builtins.ownEntries().keys());
+  // Передаём не только имена, но и число аргументов: оно у встроенных функций
+  // уже записано, и без него проверка не могла выполнить обещанное.
+  const builtins: Array<string | [string, { name: string; min: number; max: number }]> = [];
+  for (const [name, value] of interp.builtins.ownEntries()) {
+    builtins.push(value instanceof NativeFn ? [name, { name, min: value.minArgs, max: value.maxArgs }] : name);
+  }
+  const diags = check(program, builtins);
 
   const errors = diags.filter((d) => d.severity === 'error').length;
   const warnings = diags.length - errors;
