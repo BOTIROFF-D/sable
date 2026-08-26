@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { Expr, Param, Program, Stmt } from './ast.ts';
+import type { Expr, ImportName, Param, Program, Stmt } from './ast.ts';
 import { SableError, runtimeError, type Span } from './errors.ts';
 import {
   Environment, UNSET, makeShape,
@@ -52,7 +52,12 @@ function declsOf(body: Stmt[], out: Decl[]): Decl[] {
     const s = body[i]!;
     if (s.kind === 'VarDecl') out.push({ name: s.name, mutable: s.mutable });
     else if (s.kind === 'FnDecl' || s.kind === 'StructDecl') out.push({ name: s.name, mutable: false });
-    else if (s.kind === 'Import') out.push({ name: s.alias, mutable: false });
+    else if (s.kind === 'Import') {
+      // Выборочный импорт объявляет столько имён, сколько перечислено, —
+      // для области видимости это обычные объявления, просто без «const».
+      if (s.names !== null) for (const n of s.names) out.push({ name: n.alias, mutable: false });
+      else out.push({ name: s.alias, mutable: false });
+    }
   }
   return out;
 }
@@ -422,7 +427,10 @@ export class Interpreter {
       }
 
       case 'Import': {
-        const { path, alias, span } = stmt;
+        const { path, span } = stmt;
+        if (stmt.names !== null) return this.compileSelectiveImport(path, stmt.names, span);
+
+        const alias = stmt.alias;
         const slot = this.declSlot(alias);
         if (slot < 0) {
           return (env) => {
@@ -438,6 +446,33 @@ export class Interpreter {
         };
       }
     }
+  }
+
+  /**
+   * Выборочный импорт: модуль выполняется тем же загрузчиком (а значит, ровно
+   * один раз), но в область ложатся только перечисленные имена — само
+   * пространство имён модуля здесь не заводится вовсе.
+   */
+  private compileSelectiveImport(path: string, names: ImportName[], span: Span): StmtFn {
+    // Слоты известны с компиляции — как у любого другого объявления области.
+    const slots = names.map((n) => this.declSlot(n.alias));
+    return (env) => {
+      const exports = this.modules.loadExports(this, path, this.currentFile, span);
+      for (let i = 0; i < names.length; i++) {
+        const n = names[i]!;
+        // Значений undefined в языке нет: пустой ответ означает, что имени в модуле нет.
+        const value = exports.get(n.name);
+        if (value === undefined) throw missingExport(path, n.name, exports, n.span);
+        const slot = slots[i]!;
+        if (slot < 0) {
+          env.define(n.alias, value, false, n.span);
+          continue;
+        }
+        if (env.slots[slot] !== UNSET) throw redeclared(n.alias, n.span);
+        env.slots[slot] = value;
+      }
+      return NORMAL;
+    };
   }
 
   private compileFor(stmt: Extract<Stmt, { kind: 'For' }>): StmtFn {
@@ -1210,6 +1245,19 @@ function fastMethodOf(obj: Value, name: string): MethodEntry | null {
   if (obj instanceof StructInstance || obj instanceof SableModule || obj instanceof StructDef) return null;
   if (obj instanceof Map && obj.has(name)) return null;
   return findMethodEntry(obj, name);
+}
+
+/**
+ * Имени нет в модуле. Тот же текст, что и у обращения `модуль.имя`, — иначе
+ * одна и та же беда называлась бы двумя разными словами; только вместо
+ * псевдонима модуль назван путём: своего имени у него здесь нет.
+ */
+function missingExport(path: string, name: string, exports: Map<string, Value>, span: Span): unknown {
+  const near = nearest(name, [...exports.keys()]);
+  return runtimeError(
+    `в модуле «${path}» нет имени «${name}»${near ? ` — возможно, имелось в виду «${near}»` : ''}`,
+    span,
+  );
 }
 
 /** Ближайшее по написанию имя — для подсказки «возможно, имелось в виду». */

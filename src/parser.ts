@@ -1,4 +1,4 @@
-import type { Expr, Param, Program, Stmt } from './ast.ts';
+import type { Expr, ImportName, Param, Program, Stmt } from './ast.ts';
 import { SableError, parseError, type Span } from './errors.ts';
 import { Lexer } from './lexer.ts';
 import type { Token, TokenType } from './token.ts';
@@ -181,10 +181,54 @@ export class Parser {
     }
     const path = this.expect('STRING', 'путь к файлу в кавычках, например "utils.sable"');
     if (path.parts) throw parseError('путь к модулю не может содержать вставку ${...}', path.span);
-    this.expect('AS', '«as» и имя, под которым подключается модуль');
-    const alias = this.expect('IDENT', 'имя, под которым будет доступен модуль');
+    this.expect('AS', '«as» и имя модуля или список имён в «{ ... }»');
+
+    // «{» сразу после «as» — выборочный импорт. Со словарём это не спорит:
+    // после «as» выражения не бывает, читать «{» иначе просто нечем.
+    if (this.check('LBRACE')) {
+      const names = this.importNames();
+      this.endStatement();
+      return { kind: 'Import', path: String(path.value), alias: null, names, span: kw.span };
+    }
+
+    const alias = this.expect('IDENT', 'имя, под которым будет доступен модуль, или «{» и список имён');
     this.endStatement();
-    return { kind: 'Import', path: String(path.value), alias: String(alias.value), span: kw.span };
+    return { kind: 'Import', path: String(path.value), alias: String(alias.value), names: null, span: kw.span };
+  }
+
+  /** Список выборочного импорта: `{ имя, другое as своё }`, переносы внутри разрешены. */
+  private importNames(): ImportName[] {
+    const open = this.advance();
+    const names: ImportName[] = [];
+    const seen = new Set<string>();
+
+    this.skipSeparators();
+    while (!this.check('RBRACE') && !this.atEnd()) {
+      const source = this.expect('IDENT', 'имя из модуля');
+      const name = String(source.value);
+      const alias = this.match('AS')
+        ? String(this.expect('IDENT', 'новое имя после «as»').value)
+        : name;
+      // Одно и то же имя дважды в одном списке — опечатка, а не намерение:
+      // до выполнения такой список доживать незачем.
+      if (seen.has(alias)) throw parseError(`имя «${alias}» указано в списке дважды`, source.span);
+      seen.add(alias);
+      names.push({ name, alias, span: source.span });
+      this.skipSeparators();
+      if (!this.match('COMMA')) break;
+      this.skipSeparators();
+    }
+    this.skipSeparators();
+    this.expect('RBRACE', '«}» в конце списка имён');
+
+    if (names.length === 0) {
+      throw parseError(
+        'список имён пуст — перечислите, что взять из модуля, ' +
+        'или подключите его целиком: import "..." as имя',
+        open.span,
+      );
+    }
+    return names;
   }
 
   private varDecl(): Stmt {

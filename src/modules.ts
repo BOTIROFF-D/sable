@@ -4,23 +4,39 @@ import { registerSource, runtimeError, shortPath, type Span } from './errors.ts'
 import type { Interpreter } from './interpreter.ts';
 import { tokenize } from './lexer.ts';
 import { parse } from './parser.ts';
-import { SableModule } from './values.ts';
+import { SableModule, type Value } from './values.ts';
 
 /**
  * Загрузчик модулей. Каждый файл выполняется ровно один раз: повторный import
  * отдаёт уже посчитанный набор имён, поэтому побочные эффекты модуля не повторяются.
  */
 export class ModuleLoader {
-  private cache = new Map<string, Map<string, unknown>>();
+  private cache = new Map<string, Map<string, Value>>();
   /** Файлы, которые прямо сейчас выполняются — по ним ловится циклический import. */
   private loading: string[] = [];
 
+  /** Весь модуль одним пространством имён: `import "..." as имя`. */
   load(interp: Interpreter, rawPath: string, fromFile: string, alias: string, span: Span): SableModule {
+    const { shown, exports } = this.read(interp, rawPath, fromFile, span);
+    return new SableModule(alias, shown, exports);
+  }
+
+  /**
+   * Только набор имён модуля: выборочному импорту пространство имён не нужно,
+   * а вот кэш — тот же самый, иначе файл выполнился бы дважды.
+   */
+  loadExports(interp: Interpreter, rawPath: string, fromFile: string, span: Span): Map<string, Value> {
+    return this.read(interp, rawPath, fromFile, span).exports;
+  }
+
+  private read(
+    interp: Interpreter, rawPath: string, fromFile: string, span: Span,
+  ): { shown: string; exports: Map<string, Value> } {
     const full = isAbsolute(rawPath) ? rawPath : resolve(dirname(fromFile), rawPath);
     const shown = shortPath(full, relative(process.cwd(), full));
 
     const cached = this.cache.get(full);
-    if (cached) return new SableModule(alias, shown, cached as Map<string, never>);
+    if (cached) return { shown, exports: cached };
 
     const cycleAt = this.loading.indexOf(full);
     if (cycleAt !== -1) {
@@ -45,8 +61,8 @@ export class ModuleLoader {
     try {
       const program = parse(tokenize(source, shown), shown);
       const exports = interp.runModule(program, full);
-      this.cache.set(full, exports as Map<string, unknown>);
-      return new SableModule(alias, shown, exports);
+      this.cache.set(full, exports);
+      return { shown, exports };
     } finally {
       this.loading.pop();
     }
