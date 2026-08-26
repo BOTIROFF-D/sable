@@ -940,7 +940,8 @@ export class Interpreter {
     }
 
     if (op === '+') {
-      if (typeof l === 'number' && typeof r === 'number') return l + r;
+      // Два числа сюда не доходят — их разобрал быстрый путь в начале функции.
+      // Отдельная ветка для них здесь ещё и обошла бы проверку на переполнение.
       if (typeof l === 'string' && typeof r === 'string') return l + r;
       if (Array.isArray(l) && Array.isArray(r)) return [...l, ...r];
       if (typeof l === 'string' || typeof r === 'string') {
@@ -979,24 +980,11 @@ export class Interpreter {
       }
     }
 
-    const a = this.numberOperand(l, `левый операнд «${op}»`, span);
-    const b = this.numberOperand(r, `правый операнд «${op}»`, span);
-
-    switch (op) {
-      case '-': return finite(a - b, op, span);
-      case '*': return finite(a * b, op, span);
-      case '/':
-        if (b === 0) throw runtimeError('деление на ноль', span);
-        return finite(a / b, op, span);
-      case '%':
-        if (b === 0) throw runtimeError('остаток от деления на ноль', span);
-        return finite(a % b, op, span);
-      case '^': return finite(a ** b, op, span);
-      case '<': return a < b;
-      case '<=': return a <= b;
-      case '>': return a > b;
-      case '>=': return a >= b;
-    }
+    // Сюда доходит только то, где хотя бы один операнд не число: два числа
+    // целиком разобраны быстрым путём в начале. Эти два вызова и дают
+    // сообщение о неподходящем типе — считать здесь уже нечего.
+    this.numberOperand(l, `левый операнд «${op}»`, span);
+    this.numberOperand(r, `правый операнд «${op}»`, span);
     throw runtimeError(`неизвестный оператор «${op}»`, span);
   }
 

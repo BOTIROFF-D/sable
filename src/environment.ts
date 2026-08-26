@@ -125,17 +125,6 @@ export class Environment {
     return out;
   }
 
-  has(name: string): boolean {
-    const shape = this.shape;
-    if (shape !== null) {
-      const i = shape.index.get(name);
-      if (i !== undefined && this.slots[i] !== UNSET) return true;
-    }
-    if (this.name0 === name) return true;
-    if (this.rest !== null && this.rest.has(name)) return true;
-    return this.parent?.has(name) ?? false;
-  }
-
   get(name: string, span: Span): Value {
     for (let env: Environment | null = this; env; env = env.parent) {
       const shape = env.shape;
