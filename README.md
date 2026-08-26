@@ -26,10 +26,10 @@ print(fib(20))
 - **Tooling in the box.** A formatter (`sable fmt`), a static checker that runs
   without executing the program (`sable --check`), a VS Code syntax grammar, and
   two fuzzers that shrink any failure they find down to a few lines.
-- **440 checks in five independent suites** — including the exact text of every
-  error message, every example program, and every code block in the documentation.
-  A full rewrite of the interpreter core passed them without touching a single
-  expected output.
+- **536 checks in seven independent suites** — including the exact text of every
+  error message, every example program, every code block in the documentation,
+  and the command-line behaviour itself. A full rewrite of the interpreter core
+  passed them without touching a single expected output.
 
 **[Try it in the browser](https://botiroff-d.github.io/sable/)** — no install, runs
 the same interpreter compiled for the web.
@@ -157,7 +157,7 @@ node tests/run.ts --only=maps  # только словари
 node tests/run.ts --update     # перезаписать эталоны (после осознанной правки)
 ```
 
-Три независимых набора:
+Семь независимых наборов:
 
 | Набор | Что запирает |
 |---|---|
@@ -191,16 +191,17 @@ node tests/run.ts --update     # перезаписать эталоны (пос
 
 Сделано после 0.1: модули (`import … as`), перехват ошибок (`try`/`catch`),
 статическая проверка (`--check`), форматтер (`sable fmt`), расширенная библиотека,
-разбор с восстановлением, подсветка для VS Code, фаззеры, песочница в браузере.
+разбор с восстановлением, подсветка для VS Code, фаззеры, песочница в браузере,
+английская документация.
 Скорость выросла в 3,3 раза: точечные оптимизации по профилю, компиляция AST
 в замыкания, разрешение локальных имён в слоты.
 
 Ближайшие шаги, в порядке пользы:
 
-1. **Выборочный импорт** — `import "utils.sable" as { double, area }` вместо одного пространства имён.
-2. **Целочисленный тип** — сейчас всё число с плавающей точкой, как в JS.
-3. **Байткод и стековая ВМ** вместо замыканий — следующий крупный шаг по скорости.
-4. **Асинхронность или потоки** — сейчас язык строго последовательный.
+1. **Целочисленный тип** — сейчас всё число с плавающей точкой, как в JS.
+2. **Байткод и стековая ВМ** вместо замыканий — следующий крупный шаг по скорости.
+3. **Асинхронность или потоки** — сейчас язык строго последовательный.
+4. **Свободные функции для всех методов словаря** — сейчас ключ с именем метода закрывает его, а обойти можно только четыре из шестнадцати.
 
 Известное ограничение: глубина рекурсии ~900 вызовов (упирается в стек JS).
 Поднимается через `SABLE_MAX_DEPTH` вместе с `node --stack-size=...`.
