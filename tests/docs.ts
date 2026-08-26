@@ -14,11 +14,18 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const DOCS = [
-  join(ROOT, 'README.md'),
-  ...readdirSync(join(ROOT, 'docs')).filter((f) => f.endsWith('.md')).sort()
-    .map((f) => join(ROOT, 'docs', f)),
-];
+/** Все markdown-документы проекта, включая вложенные папки вроде docs/en. */
+function markdownIn(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...markdownIn(full));
+    else if (entry.name.endsWith('.md')) out.push(full);
+  }
+  return out;
+}
+
+const DOCS = [join(ROOT, 'README.md'), ...markdownIn(join(ROOT, 'docs'))];
 const CLI = join(ROOT, 'src', 'cli.ts');
 
 type Snippet = { code: string; expected: string; line: number; doc: string };
