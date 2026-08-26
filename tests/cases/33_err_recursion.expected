@@ -4,3 +4,4 @@
 1 | fn forever(n) { return forever(n + 1) }
   |                               ^
   в forever (33_err_recursion.sable:1:31) × 12
+  … и ещё 888 кадров глубже

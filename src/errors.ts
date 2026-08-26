@@ -10,6 +10,8 @@ export class SableError extends Error {
   trace: Array<{ name: string; span: Span }>;
   /** Значение, брошенное через error(...) / throw. */
   payload: unknown;
+  /** Сколько кадров не поместилось в trace: показывать «× 12» как число повторов — вранье. */
+  dropped = 0;
 
   constructor(
     stage: 'lex' | 'parse' | 'runtime',
@@ -120,6 +122,9 @@ export function formatError(err: SableError, source: string): string {
     out.push(count > 1 ? `  в ${frame.name} (${where}) × ${count}` : `  в ${frame.name} (${where})`);
     i += count;
   }
+  // Кадров может быть больше, чем мы сохранили. Молчать об этом нельзя:
+  // «× 12» тогда читается как число повторов, а это всего лишь потолок.
+  if (err.dropped > 0) out.push(`  … и ещё ${err.dropped} кадров глубже`);
 
   return out.join('\n');
 }

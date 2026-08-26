@@ -1162,6 +1162,7 @@ export class Interpreter {
       if (sig !== NORMAL) throw escaped(sig, this.signalSpan);
       return null;
     } catch (e) {
+      if (e instanceof SableError && e.stage === 'runtime' && e.trace.length >= 12) e.dropped++;
       if (e instanceof SableError && e.stage === 'runtime' && e.trace.length < 12) {
         e.trace.push({ name: fn.name ?? 'анонимная функция', span });
       }
