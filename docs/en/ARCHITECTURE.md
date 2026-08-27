@@ -78,6 +78,16 @@ that insertion order is honestly preserved.
 This is also where `equals` (comparison by content, guarded against cycles),
 `repr`/`toStr` (printing) and `truthy` live.
 
+A string is measured in characters in the language, but in UTF-16 code units in
+JavaScript: `len("😀")` is one, `"😀".length` is two. Translating between them
+costs a walk over the string, so `charAt` and `charLength` ask `isPlain` first:
+with no surrogate pairs, a character index is a code-unit index and the access
+takes a single step. The answer is remembered for the two most recent strings —
+a map will not do here, since it compares keys by content, which is exactly the
+cost we are removing. Without that memory, walking a string character by
+character grows quadratically; the lock against that regression is
+`tests/scale.ts`.
+
 ## Environment — `src/environment.ts`
 
 There are two kinds of scope, and that split is what the speed rests on.
@@ -267,6 +277,24 @@ own eyes that the new behaviour is correct.
 
 `tests/docs.ts` pulls "code block → output block" pairs out of markdown, runs the
 code and compares. Documentation with invented output breaks the build.
+
+## Self-hosting — `selfhost/`
+
+`selfhost/lexer.sable` is Sable's lexer written in Sable. It tokenizes the same
+language it is written in, and handles everything the real one does: significant
+newlines, nested comments, strings with interpolation, ranges against decimals.
+
+It is verified by cross-check rather than by examples. `tests/selfhost.ts` takes
+every `.sable` file in the repository — all 119, including the lexer's own
+source — runs it through both lexers and requires the token streams to match.
+A file with deliberately broken syntax is a result too: both must refuse, and
+refuse at the same time. On top of that, about fifteen spellings the repository
+may never contain are checked: `1..5` against `1.5`, `1e` with no exponent, a
+string inside an interpolation, an okina in a name.
+
+The value of this work is not that it sounds impressive but what it finds. Out
+of it came `char`/`code` — without them you cannot decode `\u{...}` in the
+language itself — and the fix for quadratic character access on strings.
 
 ## What is still the bottleneck
 
