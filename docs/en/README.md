@@ -18,6 +18,7 @@ print(fib(20))
 
 | Document | What is inside |
 |---|---|
+| [TUTORIAL.md](TUTORIAL.md) | the step-by-step tutorial — the gentlest way in: twelve chapters from `print("Hello")` to a worklog report |
 | [LANGUAGE.md](LANGUAGE.md) | the full language reference: syntax, types, operators, collections, functions, structs, modules, errors, standard library, and what version 0.2 does not have |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | how the interpreter is built: lexer, parser, values, environments and slot resolution, compilation to closures, modules, checker, formatter, benchmarks, tests |
 
@@ -25,7 +26,6 @@ print(fib(20))
 
 | Document | What is inside |
 |---|---|
-| [../TUTORIAL.md](../TUTORIAL.md) | the step-by-step tutorial — the gentlest way in, translation pending |
 | [../../README.md](../../README.md) | project overview, test suites, roadmap, licence and the name policy (it opens with an English section) |
 
 The interpreter's own **diagnostics are printed in Russian**. Translating them in
