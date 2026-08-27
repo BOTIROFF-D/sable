@@ -45,7 +45,11 @@ export type Stmt =
   | { kind: 'If'; cond: Expr; then: Stmt; else: Stmt | null; span: Span }
   | { kind: 'While'; cond: Expr; body: Stmt; span: Span }
   | { kind: 'For'; name: string; iterable: Expr; body: Stmt; span: Span }
-  | { kind: 'Try'; body: Stmt[]; param: string | null; handler: Stmt[]; span: Span }
+  // Обработчик и блок finally — каждый сам по себе null, если его не написали;
+  // пустыми списками их не подменить, иначе `catch {}` и отсутствие catch стали бы
+  // неразличимы. Обоих сразу null не бывает: try без «catch» и без «finally»
+  // парсер не пропускает. `param` имеет смысл только вместе с обработчиком.
+  | { kind: 'Try'; body: Stmt[]; param: string | null; handler: Stmt[] | null; finalizer: Stmt[] | null; span: Span }
   | { kind: 'Return'; value: Expr | null; span: Span }
   | { kind: 'Break'; span: Span }
   | { kind: 'Continue'; span: Span };

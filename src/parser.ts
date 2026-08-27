@@ -351,6 +351,15 @@ export class Parser {
     if (this.check('WHILE')) return this.whileStmt();
     if (this.check('FOR')) return this.forStmt();
     if (this.check('TRY')) return this.tryStmt();
+    // Сам по себе «finally» инструкцией не бывает: без try ему нечего доводить
+    // до конца. Без этой ветки он дошёл бы до разбора выражения и получил
+    // невнятное «ожидалось значение».
+    if (this.check('FINALLY')) {
+      throw parseError(
+        '«finally» без try — этот блок пишется сразу после тела try или после его «catch»',
+        this.peek().span,
+      );
+    }
     if (this.check('RETURN')) return this.returnStmt();
     if (this.check('BREAK')) { const t = this.advance(); this.endStatement(); return { kind: 'Break', span: t.span }; }
     if (this.check('CONTINUE')) { const t = this.advance(); this.endStatement(); return { kind: 'Continue', span: t.span }; }
@@ -377,11 +386,7 @@ export class Parser {
     const span = this.peek().span;
     const then: Stmt = { kind: 'Block', body: this.block(), span };
     let alt: Stmt | null = null;
-    // «}» и «else» на разных строках — обычное форматирование, перенос здесь не разделитель.
-    const afterThen = this.pos;
-    this.skipSeparators();
-    if (!this.check('ELSE')) this.pos = afterThen;
-    if (this.check('ELSE')) {
+    if (this.aheadPastBreaks('ELSE')) {
       this.advance();
       if (this.check('IF')) alt = this.ifStmt();
       else {
@@ -414,20 +419,50 @@ export class Parser {
     };
   }
 
+  /**
+   * Заглянуть за перевод строки: «}» и следующее за ним слово (`else`, `catch`,
+   * `finally`) на разных строках — обычное форматирование, и перенос между ними
+   * разделителем не считается. Слово не нашлось — позиция возвращается назад,
+   * и перенос снова закрывает инструкцию.
+   */
+  private aheadPastBreaks(type: TokenType): boolean {
+    const mark = this.pos;
+    this.skipSeparators();
+    if (this.check(type)) return true;
+    this.pos = mark;
+    return false;
+  }
+
   private tryStmt(): Stmt {
     const kw = this.advance();
     const body = this.block();
-    // «}» и «catch» на разных строках — обычное форматирование.
-    const afterBody = this.pos;
-    this.skipSeparators();
-    if (!this.check('CATCH')) {
-      this.pos = afterBody;
-      throw parseError('после блока try обязателен «catch» — иначе ошибку некому обработать', kw.span);
+
+    let param: string | null = null;
+    let handler: Stmt[] | null = null;
+    if (this.aheadPastBreaks('CATCH')) {
+      this.advance();
+      param = this.check('IDENT') ? String(this.advance().value) : null;
+      handler = this.block();
     }
-    this.advance();
-    const param = this.check('IDENT') ? String(this.advance().value) : null;
-    const handler = this.block();
-    return { kind: 'Try', body, param, handler, span: kw.span };
+
+    let finalizer: Stmt[] | null = null;
+    if (this.aheadPastBreaks('FINALLY')) {
+      this.advance();
+      finalizer = this.block();
+      // Второй finally: какой из них «всегда выполняется» — вопрос без ответа,
+      // поэтому такую запись честнее отвергнуть, чем выбрать за автора.
+      if (this.aheadPastBreaks('FINALLY')) {
+        throw parseError('у try уже есть «finally» — второго быть не может', this.peek().span);
+      }
+    }
+
+    if (handler === null && finalizer === null) {
+      throw parseError(
+        'после блока try обязателен «catch» или «finally» — сам по себе try ошибку не обрабатывает',
+        kw.span,
+      );
+    }
+    return { kind: 'Try', body, param, handler, finalizer, span: kw.span };
   }
 
   private returnStmt(): Stmt {
