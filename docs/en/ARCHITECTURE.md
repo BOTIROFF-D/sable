@@ -228,6 +228,11 @@ AST. The formatter makes its own pass over the source and lays comments out
 along statement boundaries. Losing them silently is unacceptable, so the test
 compares the list of comments before and after.
 
+A list or a dictionary of short values fills the line rather than stretching
+into a column: a keyword table at one word per line takes a whole screen and
+reads badly. Long values still go one per line — filling only helps where the
+values are short and uniform.
+
 ## Measurements — `bench/`
 
 `node bench/run.ts` runs programs of varying load and compares against a saved

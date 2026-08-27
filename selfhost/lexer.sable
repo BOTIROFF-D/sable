@@ -40,45 +40,17 @@ fn часть_имени(c) {
 // ---- таблицы ---------------------------------------------------------------
 
 const КЛЮЧЕВЫЕ = {
-  "let": "LET",
-  "const": "CONST",
-  "fn": "FN",
-  "return": "RETURN",
-  "if": "IF",
-  "else": "ELSE",
-  "while": "WHILE",
-  "for": "FOR",
-  "in": "IN",
-  "break": "BREAK",
-  "continue": "CONTINUE",
-  "true": "TRUE",
-  "false": "FALSE",
-  "nil": "NIL",
-  "struct": "STRUCT",
-  "import": "IMPORT",
-  "as": "AS",
-  "try": "TRY",
-  "catch": "CATCH",
-  "finally": "FINALLY",
-  "and": "AND",
-  "or": "OR",
+  "let": "LET", "const": "CONST", "fn": "FN", "return": "RETURN", "if": "IF", "else": "ELSE",
+  "while": "WHILE", "for": "FOR", "in": "IN", "break": "BREAK", "continue": "CONTINUE",
+  "true": "TRUE", "false": "FALSE", "nil": "NIL", "struct": "STRUCT", "import": "IMPORT",
+  "as": "AS", "try": "TRY", "catch": "CATCH", "finally": "FINALLY", "and": "AND", "or": "OR",
   "not": "BANG",
 }
 
 // Виды, после которых перевод строки завершает инструкцию — правило как в Go.
 const ЗАВЕРШАЮТ = {
-  NUMBER: true,
-  STRING: true,
-  IDENT: true,
-  TRUE: true,
-  FALSE: true,
-  NIL: true,
-  RPAREN: true,
-  RBRACKET: true,
-  RBRACE: true,
-  RETURN: true,
-  BREAK: true,
-  CONTINUE: true,
+  NUMBER: true, STRING: true, IDENT: true, TRUE: true, FALSE: true, NIL: true, RPAREN: true,
+  RBRACKET: true, RBRACE: true, RETURN: true, BREAK: true, CONTINUE: true,
 }
 
 // ---- состояние разбора -----------------------------------------------------
@@ -207,15 +179,7 @@ fn число(р, первый, строка, колонка) {
 // ---- строки ----------------------------------------------------------------
 
 const ПРОСТЫЕ_ЭКРАНЫ = {
-  n: "\n",
-  t: "\t",
-  r: "\r",
-  "0": "\u{0000}",
-  "\\": "\\",
-  "$": "$",
-  "\"": "\"",
-  "'": "'",
-  "`": "`",
+  n: "\n", t: "\t", r: "\r", "0": "\u{0000}", "\\": "\\", "$": "$", "\"": "\"", "'": "'", "`": "`",
 }
 
 fn код_символа(р, строка) {
