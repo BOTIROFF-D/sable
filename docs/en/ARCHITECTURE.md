@@ -149,6 +149,17 @@ A call boundary does not let a signal through: a `break` inside a function canno
 stop the loop that called it. It used to — and then the static check, which
 counted that as an error, disagreed with the runtime.
 
+This is why `finally` is not merely the host machine's `try/finally`: a signal
+arrives as a number, not as an exception, and both have to be intercepted at
+once. `compileTry` puts `finally` on as a separate layer over the body (and over
+the handler, when there is one): the layer catches both the returned signal and
+the thrown error, sets aside the pending `return` value and the pending
+`break` location — both live in fields of the interpreter, and any call made
+from inside `finally` would overwrite them — runs the `finally` body, and only
+then resumes what it set aside. A signal or an error of its own from inside
+`finally` overrides the pending one; `--check` warns about that case, and the
+language reference names it outright.
+
 The call stack is kept by hand: depth by a counter, while names and locations go
 into the report on an error. Repeats collapse into `× N`, so that infinite
 recursion does not turn into a wall of text.

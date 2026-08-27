@@ -460,12 +460,114 @@ catch e { print(e.value.code, e.value.text, e.message) }
 404 not found {"code": 404, "text": "not found"}
 ```
 
-The variable name is optional: `catch { … }`. A `try` without a `catch` is a
-syntax error, not a silently swallowed block.
+The variable name is optional: `catch { … }`. A `try` with neither a `catch` nor
+a `finally` is a syntax error, not a silently swallowed block.
 
 Only runtime errors are caught. `return`, `break` and `continue` pass straight
 through `try` — otherwise a `return` from inside a `try` would stop leaving the
 function.
+
+### finally
+
+`finally` is what has to be done in any case: close the file, release the lock,
+put the button back the way it was.
+
+```sable
+fn clean_up() { print("cleaned up") }
+
+try {
+  print("working")
+  error("it broke")
+} catch e {
+  print("failed:", e.message)
+} finally {
+  clean_up()
+}
+```
+
+```text
+working
+failed: it broke
+cleaned up
+```
+
+The `catch` is optional here — a `try` with only a `finally` is legal. The error
+is then not caught: the block is carried to the end and the error flies on.
+
+```sable
+fn clean_up() { print("cleaned up") }
+
+try {
+  try { error("it broke") } finally { clean_up() }
+} catch e {
+  print("arrived:", e.message)
+}
+```
+
+```text
+cleaned up
+arrived: it broke
+```
+
+"Always" here is literal. `finally` runs:
+
+- when the body reaches its end;
+- when the error was caught by its own `catch`;
+- when there is nobody to catch it and the error flies on;
+- when the `catch` itself raised an error;
+- when `try` or `catch` is left through `return`, `break` or `continue` — and it
+  runs **before** the function returns its value and before the loop breaks.
+
+```sable
+fn find(xs, what) {
+  for x in xs {
+    try {
+      if x == what { return "found ${x}" }
+    } finally {
+      print("looked at ${x}")
+    }
+  }
+  return "no such thing"
+}
+
+print(find([1, 2, 3], 2))
+```
+
+```text
+looked at 1
+looked at 2
+found 2
+```
+
+**What matters here.** A `finally` may leave the block on its own — through its
+own `return`, `break`, `continue` or its own error. It then **overrides** the
+reason the block was being left: the other `return`'s value never comes back,
+and the other error vanishes without a trace.
+
+```sable
+fn how_many() {
+  try { return "from try" } finally { return "from finally" }
+}
+
+fn swallowed() {
+  try { error("this error disappears") } finally { return "from finally" }
+}
+
+print(how_many(), swallowed())
+```
+
+```text
+from finally from finally
+```
+
+The language does not forbid this: an error from a function called inside
+`finally` overrides the pending one in exactly the same way, and a half-ban
+would only confuse. But the case is a well-known source of bugs, so
+`sable --check` warns about it. The rule is simple — leave a `finally` the
+ordinary way, by reaching the end of the block.
+
+One `try` cannot have two `finally` blocks, and a `finally` without a `try` is a
+syntax error.
 
 ## Standard library
 
@@ -640,7 +742,7 @@ parsing would blow the stack, and instead of a language error the user would see
 a JavaScript stack trace.
 
 Missing: an integer type, C-style counted `for` loops, sets, regular
-expressions, concurrency, a `finally` block. The order of work is at the end of the [README](../../README.md).
+expressions, concurrency. The order of work is at the end of the [README](../../README.md).
 
 ## Diagnostics
 

@@ -95,7 +95,7 @@
       "patterns": [
         {
           "name": "keyword.control.sable",
-          "match": "\\b(if|else|while|for|in|break|continue|return|try|catch)\\b"
+          "match": "\\b(if|else|while|for|in|break|continue|return|try|catch|finally)\\b"
         },
         {
           "name": "storage.type.sable",
