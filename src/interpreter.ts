@@ -523,34 +523,83 @@ export class Interpreter {
    * try/catch перехватывает только ошибки выполнения самой программы.
    * Сигналы return/break/continue проходят насквозь: иначе `return` изнутри try
    * перестал бы выходить из функции.
+   *
+   * `finally` наворачивается сверху отдельным слоем: под ним лежит либо голое
+   * тело, либо тело вместе с обработчиком. Так блок доводится до конца и когда
+   * ошибку поймал свой catch, и когда её ловить некому, и когда ошибку бросил
+   * сам catch.
    */
   private compileTry(stmt: Extract<Stmt, { kind: 'Try' }>): StmtFn {
     const bodyShape = this.pushScope(declsOf(stmt.body, []));
     const body = this.compileBlock(stmt.body);
     if (bodyShape !== null) this.scopes.pop();
 
-    const param = stmt.param;
-    const handlerShape = this.pushScope(declsOf(stmt.handler, param ? [{ name: param, mutable: false }] : []));
-    const handler = this.compileBlock(stmt.handler);
-    if (handlerShape !== null) this.scopes.pop();
-    const paramSlot = param && handlerShape ? handlerShape.index.get(param)! : -1;
+    // Часть под защитой finally: тело и, если он написан, обработчик.
+    let guarded: StmtFn;
+    if (stmt.handler === null) {
+      guarded = bodyShape === null ? body : (env) => body(new Environment(env, false, bodyShape));
+    } else {
+      const param = stmt.param;
+      const handlerBody = stmt.handler;
+      const handlerShape = this.pushScope(declsOf(handlerBody, param ? [{ name: param, mutable: false }] : []));
+      const handler = this.compileBlock(handlerBody);
+      if (handlerShape !== null) this.scopes.pop();
+      const paramSlot = param && handlerShape ? handlerShape.index.get(param)! : -1;
+
+      guarded = (env) => {
+        const depthBefore = this.depth;
+        try {
+          return body(bodyShape === null ? env : new Environment(env, false, bodyShape));
+        } catch (raw) {
+          // Срыв стека JS — это тоже ошибка выполнения программы, и справочник
+          // обещает, что ошибки выполнения ловятся. Без перевода она пролетала
+          // мимо catch, и программа умирала внутри try.
+          const e = raw instanceof RangeError ? this.decorate(raw) : raw;
+          if (!(e instanceof SableError) || e.stage !== 'runtime') throw e;
+          // Кадры вызовов, оборванных ошибкой, снимаем — обработчик выполняется на своём уровне.
+          this.depth = depthBefore;
+          const caught = handlerShape === null ? env : new Environment(env, false, handlerShape);
+          if (paramSlot >= 0) caught.slots[paramSlot] = describeError(e);
+          return handler(caught);
+        }
+      };
+    }
+
+    if (stmt.finalizer === null) return guarded;
+
+    const finalShape = this.pushScope(declsOf(stmt.finalizer, []));
+    const finalizer = this.compileBlock(stmt.finalizer);
+    if (finalShape !== null) this.scopes.pop();
 
     return (env) => {
       const depthBefore = this.depth;
+      let sig: Signal = NORMAL;
+      let failure: unknown = null;
+      let failed = false;
       try {
-        return body(bodyShape === null ? env : new Environment(env, false, bodyShape));
+        sig = guarded(env);
       } catch (raw) {
-        // Срыв стека JS — это тоже ошибка выполнения программы, и справочник
-        // обещает, что ошибки выполнения ловятся. Без перевода она пролетала
-        // мимо catch, и программа умирала внутри try.
-        const e = raw instanceof RangeError ? this.decorate(raw) : raw;
-        if (!(e instanceof SableError) || e.stage !== 'runtime') throw e;
-        // Кадры вызовов, оборванных ошибкой, снимаем — обработчик выполняется на своём уровне.
-        this.depth = depthBefore;
-        const caught = handlerShape === null ? env : new Environment(env, false, handlerShape);
-        if (paramSlot >= 0) caught.slots[paramSlot] = describeError(e);
-        return handler(caught);
+        failure = raw;
+        failed = true;
       }
+
+      // То, ради чего блок покидали, приходится отложить: finally выполняет
+      // чужой код, а он перепишет и значение return, и место break/continue.
+      const pendingValue = this.returnValue;
+      const pendingSpan = this.signalSpan;
+      // Кадры вызовов, оборванных ошибкой, сняты — finally работает на своём уровне.
+      this.depth = depthBefore;
+
+      // Ошибка изнутри finally летит наружу как есть: она перекрывает отложенное.
+      const fin = finalizer(finalShape === null ? env : new Environment(env, false, finalShape));
+      // Свой сигнал finally тоже перекрывает отложенное — и значение return, и
+      // место break уже принадлежат ему, восстанавливать чужие нельзя.
+      if (fin !== NORMAL) return fin;
+
+      this.returnValue = pendingValue;
+      this.signalSpan = pendingSpan;
+      if (failed) throw failure;
+      return sig;
     };
   }
 
