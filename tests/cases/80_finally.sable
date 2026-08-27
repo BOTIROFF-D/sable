@@ -1,0 +1,51 @@
+// finally выполняется всегда — каким бы путём ни покидали блок.
+
+// 1. Обычное завершение тела.
+try { print("тело прошло") } finally { print("finally после тела") }
+
+// 2. Ошибка, пойманная своим catch.
+try { error("сбой") } catch e { print("поймали:", e.message) } finally { print("finally после catch") }
+
+// catch может не называть переменную — finally от этого не меняется.
+try { error("молча") } catch { print("поймали без имени") } finally { print("finally 3") }
+
+// 6. Ошибка, брошенная из самого catch: finally всё равно отрабатывает,
+// а ошибка летит дальше — её ловит внешний try.
+try {
+  try { error("первая") } catch e { error("вторая, из catch") } finally { print("finally при броске из catch") }
+} catch внешний { print("снаружи:", внешний.message) }
+
+// 3. Ошибку ловить некому — finally отрабатывает, ошибка летит дальше.
+try {
+  try { error("некому ловить") } finally { print("finally без catch") }
+} catch e { print("долетела:", e.message) }
+
+// 7. Вложенные try/finally: порядок — изнутри наружу.
+try {
+  try {
+    try { error("со дна") } finally { print("finally самый внутренний") }
+  } finally { print("finally средний") }
+} catch e { print("верх:", e.message) } finally { print("finally самый внешний") }
+
+// finally видит имена снаружи и заводит свои — это обычный блок.
+let журнал = []
+fn записать(что) { журнал.push(что) }
+try { записать("работа") } finally {
+  let пометка = "прибрано"
+  записать(пометка)
+}
+print(журнал)
+
+// Тело finally может быть пустым.
+try { print("пустой finally") } finally {}
+
+// Ошибка внутри вызванной функции: finally отрабатывает на своём уровне.
+fn глубоко(n) { if n == 0 { error("дно") }; return глубоко(n - 1) }
+try {
+  try { глубоко(3) } finally { print("finally после глубокого вызова") }
+} catch e { print("со дна:", e.message) }
+
+// Встроенная ошибка ловится так же, как своя.
+try {
+  try { print([1, 2][99]) } finally { print("finally после встроенной ошибки") }
+} catch e { print(e.message) }

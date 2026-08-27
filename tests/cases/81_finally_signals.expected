@@ -1,0 +1,26 @@
+finally до выхода из функции
+значение из try
+finally после catch
+значение из catch
+finally при пустом return
+nil
+внутри finally вызвали: 7
+своё
+finally на витке 0
+finally на витке 1
+finally на витке 2
+finally на витке 3
+finally на витке 4
+[0, 2, 3]
+finally в while, n = 1
+finally в while, n = 2
+вышли на n = 2
+finally внутренний
+finally внешний
+сквозь оба
+finally i = 0 j = 0
+finally i = 0 j = 1
+внешний виток 0 продолжается
+finally i = 1 j = 0
+finally i = 1 j = 1
+внешний виток 1 продолжается

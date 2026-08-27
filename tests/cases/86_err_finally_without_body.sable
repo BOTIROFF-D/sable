@@ -1,0 +1,5 @@
+// «finally» приклеивается к своему try, а не к чужому: у второго try
+// своего finally нет, и он остаётся без catch.
+try { print(1) } finally { print(2) }
+try { print(3) }
+print(4)

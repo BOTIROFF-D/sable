@@ -1,0 +1,61 @@
+// finally и сигналы: return, break и continue — не исключения, а возвращаемые
+// значения. finally обязан отработать и на пути сигнала, а сигнал — продолжиться.
+
+// 4. return изнутри try отрабатывает finally ДО выхода из функции.
+fn вернуть() {
+  try { return "значение из try" } finally { print("finally до выхода из функции") }
+}
+print(вернуть())
+
+// return изнутри catch — то же самое.
+fn вернуть_из_catch() {
+  try { error("сбой") } catch e { return "значение из catch" } finally { print("finally после catch") }
+}
+print(вернуть_из_catch())
+
+// return без значения тоже проходит сквозь finally.
+fn пусто() { try { return } finally { print("finally при пустом return") } }
+print(пусто())
+
+// Вызов внутри finally не должен подменить отложенное значение return:
+// у чужого вызова свой return, и он живёт в том же поле интерпретатора.
+fn семь() { return 7 }
+fn не_подменится() {
+  try { return "своё" } finally { print("внутри finally вызвали:", семь()) }
+}
+print(не_подменится())
+
+// 5. break и continue изнутри try внутри цикла.
+let собрано = []
+for i in 0..5 {
+  try {
+    if i == 1 { continue }
+    if i == 4 { break }
+    собрано.push(i)
+  } finally { print("finally на витке", i) }
+}
+print(собрано)
+
+// То же в while.
+let n = 0
+while true {
+  n += 1
+  try { if n == 2 { break } } finally { print("finally в while, n =", n) }
+}
+print("вышли на n =", n)
+
+// Сигнал проходит сквозь два finally подряд, в порядке изнутри наружу.
+fn два_слоя() {
+  try {
+    try { return "сквозь оба" } finally { print("finally внутренний") }
+  } finally { print("finally внешний") }
+}
+print(два_слоя())
+
+// break из внутреннего цикла проходит через finally и прерывает только свой цикл.
+for i in 0..2 {
+  for j in 0..5 {
+    try { if j == 1 { break } } finally { print("finally i =", i, "j =", j) }
+  }
+  print("внешний виток", i, "продолжается")
+}

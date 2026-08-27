@@ -1,0 +1,38 @@
+// Спорный случай: finally сам покидает блок, перекрывая то, ради чего его
+// покидали. Язык это разрешает — и здесь записано, чем именно всё кончается.
+
+// return изнутри finally перекрывает return изнутри try.
+fn перекрытый_return() {
+  try { return "из try" } finally { return "из finally" }
+}
+print(перекрытый_return())
+
+// return изнутри finally перекрывает и непойманную ошибку: ошибка пропадает.
+fn ошибка_проглочена() {
+  try { error("эта ошибка не долетит") } finally { return "finally съел ошибку" }
+}
+print(ошибка_проглочена())
+
+// break изнутри finally перекрывает return изнутри try: функция досчитывает цикл.
+fn перекрытый_break() {
+  for i in 0..3 { try { return "рано" } finally { break } }
+  return "дошли до конца"
+}
+print(перекрытый_break())
+
+// Ошибка изнутри finally перекрывает ошибку изнутри try — наружу летит вторая.
+try {
+  try { error("первая") } finally { error("вторая") }
+} catch e { print("долетела:", e.message) }
+
+// И ошибка изнутри finally перекрывает return изнутри try.
+fn ошибка_поверх_return() {
+  try { return "не вернётся" } finally { error("вместо возврата") }
+}
+try { print(ошибка_поверх_return()) } catch e { print("вместо значения:", e.message) }
+
+// Если finally отработал спокойно, отложенный сигнал продолжается как ни в чём не бывало.
+fn спокойный_finally() {
+  try { return "вернулось" } finally { let _тихо = 1 }
+}
+print(спокойный_finally())

@@ -1,5 +1,5 @@
 Ошибка синтаксиса: после блока try обязателен «catch» или «finally» — сам по себе try ошибку не обрабатывает
-  --> 44_err_try_no_catch.sable:1:1
+  --> 86_err_finally_without_body.sable:4:1
   |
-1 | try {
+4 | try { print(3) }
   | ^

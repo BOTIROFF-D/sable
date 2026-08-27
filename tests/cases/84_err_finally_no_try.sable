@@ -1,0 +1,3 @@
+print("до")
+finally { print("прибраться") }
+print("после")

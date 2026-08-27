@@ -1,0 +1,5 @@
+Ошибка синтаксиса: у try уже есть «finally» — второго быть не может
+  --> 85_err_two_finally.sable:1:77
+  |
+1 | try { print("тело") } catch e { print(e.message) } finally { print("раз") } finally { print("два") }
+  |                                                                             ^
