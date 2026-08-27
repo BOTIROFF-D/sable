@@ -76,6 +76,9 @@ const CASES: Case[] = [
   { name: 'файлы отказывают понятно', kind: 'run', source: 'print(read_file("/x"))', ok: false, expect: 'не удалось прочитать файл' },
   { name: 'ввод отказывает понятно', kind: 'run', source: 'print(input())', ok: false, expect: 'не удалось прочитать ввод' },
   { name: 'модули отказывают понятно', kind: 'run', source: 'import "x.sable" as x', ok: false, expect: 'не удалось прочитать модуль' },
+  // Аргументов командной строки в браузере нет — но и падать на них нельзя:
+  // список просто пуст.
+  { name: 'аргументов нет, а не ошибка', kind: 'run', source: 'print(len(args()), args())', ok: true, expect: '0 []' },
   { name: 'форматирование', kind: 'format', source: 'let  x=1\nif x>0 { print( x ) }', ok: true, expect: 'let x = 1' },
   { name: 'анализ находит', kind: 'check', source: 'fn f(a, b) { return a }\nprint(f(1))', ok: false, expect: 'ожидает 2 аргумента' },
   { name: 'анализ молчит на чистом', kind: 'check', source: 'let a = 1\nprint(a)', ok: true, expect: 'Замечаний нет' },

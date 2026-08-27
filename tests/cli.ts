@@ -37,6 +37,10 @@ const SYNTAX = file('syntax.sable', 'fn f(a b) { return a }\n');
 const RUNTIME = file('runtime.sable', 'print(нету)\n');
 const UNFORMATTED = file('unfmt.sable', 'let  x=1\nif x>0 { print( x ) }\n');
 const MISSING = join(BOX, 'нет-такого.sable');
+const ARGS = file('args.sable', 'print(len(args()))\nfor a in args() { print(a) }\n');
+// Список свой на каждый вызов: изменив его, программа не должна испортить
+// то, что вернётся в следующий раз.
+const ARGS_MUT = file('args_mut.sable', 'let a = args()\na.push("подделка")\nprint(len(args()))\n');
 
 type Run = { code: number; out: string; err: string };
 
@@ -82,6 +86,15 @@ const CASES: Case[] = [
   { name: 'fmt -c молчит на каноничном', args: ['fmt', '-c', join(ROOT, 'tests', 'cases', '01_literals.sable')], code: 0 },
   { name: 'fmt без пути', args: ['fmt'], code: 64 },
   { name: 'fmt -w и -c вместе', args: ['fmt', '-w', '-c', UNFORMATTED], code: 64 },
+
+  // Аргументы командной строки. Проверять их можно только здесь: остальные
+  // наборы зовут интерпретатор напрямую, и настоящего процесса у них нет.
+  { name: 'аргументы доходят до программы', args: [ARGS, 'раз', 'два'], code: 0, expect: '2\nраз\nдва', stream: 'out' },
+  { name: 'без аргументов список пуст', args: [ARGS], code: 0, expect: '0\n', stream: 'out' },
+  { name: 'аргумент с пробелом остаётся одним', args: [ARGS, 'две слова'], code: 0, expect: '1\nдве слова', stream: 'out' },
+  { name: 'флаг после файла — аргумент, а не команда', args: [ARGS, '--check'], code: 0, expect: '1\n--check', stream: 'out' },
+  { name: 'список аргументов не переиспользуется', args: [ARGS_MUT], code: 0, expect: '0\n', stream: 'out' },
+  { name: 'аргументы после -e', args: ['-e', 'print(args().join("|"))', 'a', 'b'], code: 0, expect: 'a|b', stream: 'out' },
 
   { name: 'интерактивный режим считает', args: [], stdin: 'let a = 1\na + 41\n', code: 0, expect: '42', stream: 'out' },
   { name: 'интерактивный режим переживает ошибку', args: [], stdin: 'нету\nprint("живой")\n', code: 0, expect: 'живой', stream: 'out' },
