@@ -4,7 +4,7 @@
  * Правила оформления (единые, обсуждению на месте не подлежат):
  *   • отступ — два пробела, табов нет;
  *   • «{» остаётся на строке заголовка, «}» занимает свою строку,
- *     «else» и «catch» пишутся на строке закрывающей скобки;
+ *     «else», «catch» и «finally» пишутся на строке закрывающей скобки;
  *   • тело из одной простой инструкции остаётся на строке заголовка, если влезает
  *     в ширину; структура из одних полей — тоже; остальное переносится,
  *     «}» своей строкой;
@@ -376,13 +376,17 @@ class Formatter {
     return this.braces.get(open) ?? -1;
   }
 
-  /** Блок обработчика: первая «catch» после тела try. */
-  private catchBlockAt(bodyClose: number): { open: number; close: number } | null {
-    const start = this.tokenAt.get(bodyClose);
+  /**
+   * Блок ветки try: первая «catch» или «finally» после закрывающей скобки
+   * предыдущей ветки. Искать с этого места безопасно — всё, что вложено внутрь
+   * предыдущей ветки, осталось позади.
+   */
+  private clauseBlockAt(prevClose: number, word: 'CATCH' | 'FINALLY'): { open: number; close: number } | null {
+    const start = this.tokenAt.get(prevClose);
     if (start === undefined) return null;
     for (let i = start; i < this.tokens.length; i++) {
       const t = this.tokens[i]!;
-      if (t.type === 'CATCH') return this.blockAt(this.offset(t.span));
+      if (t.type === word) return this.blockAt(this.offset(t.span));
       if (t.type === 'EOF') return null;
     }
     return null;
@@ -590,13 +594,26 @@ class Formatter {
       case 'Try': {
         const block = this.blockAt(this.offset(s.span));
         this.body('try', s.body, block ? block.close : -1, false);
-        const handler = block ? this.catchBlockAt(block.close) : null;
-        const head = s.param === null ? ' catch {' : ` catch ${s.param} {`;
-        this.appendToLast(head);
-        this.ind++;
-        this.stmtList(s.handler, handler ? handler.close : -1, false);
-        this.ind--;
-        this.push('}');
+        // Каждая следующая ветка ищется от «}» предыдущей — и она же пишется
+        // на строке этой «}», как «else» после «if».
+        let prevClose = block ? block.close : -1;
+        if (s.handler !== null) {
+          const handler = prevClose >= 0 ? this.clauseBlockAt(prevClose, 'CATCH') : null;
+          this.appendToLast(s.param === null ? ' catch {' : ` catch ${s.param} {`);
+          this.ind++;
+          this.stmtList(s.handler, handler ? handler.close : -1, false);
+          this.ind--;
+          this.push('}');
+          prevClose = handler ? handler.close : -1;
+        }
+        if (s.finalizer !== null) {
+          const fin = prevClose >= 0 ? this.clauseBlockAt(prevClose, 'FINALLY') : null;
+          this.appendToLast(' finally {');
+          this.ind++;
+          this.stmtList(s.finalizer, fin ? fin.close : -1, false);
+          this.ind--;
+          this.push('}');
+        }
         return;
       }
 

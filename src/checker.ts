@@ -278,11 +278,19 @@ class Checker {
       }
 
       case 'Try':
-        // Тело и обработчик — две отдельные области; имя ошибки живёт только в обработчике.
+        // Тело, обработчик и finally — три отдельные области; имя ошибки живёт
+        // только в обработчике.
         this.block(stmt.body, { names: new Map(), parent: this.scope });
-        this.block(stmt.handler, { names: new Map(), parent: this.scope }, () => {
-          if (stmt.param) this.define(stmt.param, stmt.span, 'const', false, false);
-        });
+        if (stmt.handler !== null) {
+          const handler = stmt.handler;
+          this.block(handler, { names: new Map(), parent: this.scope }, () => {
+            if (stmt.param) this.define(stmt.param, stmt.span, 'const', false, false);
+          });
+        }
+        if (stmt.finalizer !== null) {
+          this.block(stmt.finalizer, { names: new Map(), parent: this.scope });
+          for (const s of stmt.finalizer) this.warnFinallyEscape(s, false);
+        }
         return;
 
       case 'Return':
@@ -302,6 +310,68 @@ class Checker {
         if (this.loopDepth === 0) {
           this.error('«continue» вне цикла — перейти к следующему витку можно только в «while» или «for»', stmt.span);
         }
+        return;
+    }
+  }
+
+  /**
+   * `return`, `break` и `continue` прямо в теле `finally`.
+   *
+   * Выполняться `finally` обязан всегда, в том числе по пути чужого сигнала, —
+   * и собственный сигнал изнутри `finally` этот чужой перекрывает: функция
+   * вернёт не то, что было в `return` внутри `try`, а цикл прервётся не там,
+   * где просили. Язык такую запись разрешает (запретить её всё равно нельзя:
+   * ошибка из вызванной внутри `finally` функции перекрывает ровно так же),
+   * но молчать о ней проверка не должна — она молча теряет причину выхода.
+   *
+   * Внутрь вложенных функций не спускаемся вовсе, а `break`/`continue` внутри
+   * цикла, заведённого прямо в `finally`, законны: такой сигнал из блока не выходит.
+   */
+  private warnFinallyEscape(stmt: Stmt, inLoop: boolean): void {
+    switch (stmt.kind) {
+      case 'Return':
+        // Вне функции про «return» уже сказано ошибкой — не повторяться.
+        if (this.fnDepth > 0) {
+          this.warn(
+            '«return» внутри «finally» перекроет то, ради чего покидали блок, — ' +
+            'верните значение из «try» или из «catch»',
+            stmt.span,
+          );
+        }
+        return;
+
+      case 'Break':
+      case 'Continue':
+        if (!inLoop && this.loopDepth > 0) {
+          this.warn(
+            `«${stmt.kind === 'Break' ? 'break' : 'continue'}» внутри «finally» перекроет то, ` +
+            'ради чего покидали блок, — перенесите его в «try» или в «catch»',
+            stmt.span,
+          );
+        }
+        return;
+
+      case 'Block':
+        for (const s of stmt.body) this.warnFinallyEscape(s, inLoop);
+        return;
+
+      case 'If':
+        this.warnFinallyEscape(stmt.then, inLoop);
+        if (stmt.else) this.warnFinallyEscape(stmt.else, inLoop);
+        return;
+
+      case 'While':
+      case 'For':
+        this.warnFinallyEscape(stmt.body, true);
+        return;
+
+      case 'Try':
+        for (const s of stmt.body) this.warnFinallyEscape(s, inLoop);
+        if (stmt.handler !== null) for (const s of stmt.handler) this.warnFinallyEscape(s, inLoop);
+        if (stmt.finalizer !== null) for (const s of stmt.finalizer) this.warnFinallyEscape(s, inLoop);
+        return;
+
+      default:
         return;
     }
   }
@@ -644,7 +714,11 @@ function collectReassigned(program: Program, out: Set<string>): void {
       case 'If': walkExpr(stmt.cond); walkStmt(stmt.then); if (stmt.else) walkStmt(stmt.else); return;
       case 'While': walkExpr(stmt.cond); walkStmt(stmt.body); return;
       case 'For': walkExpr(stmt.iterable); walkStmt(stmt.body); return;
-      case 'Try': stmt.body.forEach(walkStmt); stmt.handler.forEach(walkStmt); return;
+      case 'Try':
+        stmt.body.forEach(walkStmt);
+        stmt.handler?.forEach(walkStmt);
+        stmt.finalizer?.forEach(walkStmt);
+        return;
       case 'Return': if (stmt.value) walkExpr(stmt.value); return;
       case 'Break':
       case 'Continue': return;
