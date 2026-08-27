@@ -72,9 +72,8 @@ function canon(tokens: Token[]): string {
  */
 function selfhost(paths: string[]): Map<string, string> {
   const sent = paths.map((p) => relative(ROOT, p));
-  const r = spawnSync(process.execPath, [CLI, DRIVER], {
+  const r = spawnSync(process.execPath, [CLI, DRIVER, ...sent], {
     cwd: ROOT,
-    input: sent.join('\n') + '\n',
     encoding: 'utf8',
     maxBuffer: 256 * 1024 * 1024,
   });
