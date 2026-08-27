@@ -285,23 +285,46 @@ code and compares. Documentation with invented output breaks the build.
 
 ## Self-hosting — `selfhost/`
 
-`selfhost/lexer.sable` is Sable's lexer written in Sable. It tokenizes the same
-language it is written in, and handles everything the real one does: significant
-newlines, nested comments, strings with interpolation, ranges against decimals.
+Sable's front end, written in Sable:
 
-It is verified by cross-check rather than by examples. `tests/selfhost.ts` takes
-every `.sable` file in the repository — all 119, including the lexer's own
-source — runs it through both lexers and requires the token streams to match.
+```
+lexer.sable    source         → tokens
+parser.sable   tokens         → tree
+запись.sable   tree           → canonical text form
+main.sable     prints the tokens of the files given as arguments
+дерево.sable   prints the trees of the files given as arguments
+```
+
+This is the same language they are written in, and they do everything the real
+front end does: significant newlines, nested comments, strings with
+interpolation, precedence down to right-associative exponentiation, a dictionary
+against a block body, and refusal at exactly the points where the real parser
+refuses.
+
+Verification is by cross-check, not by examples. `tests/selfhost.ts` takes every
+`.sable` file in the repository — all 122, including the front end's own
+sources — and runs it twice: the token stream against the real lexer, the tree
+against the real parser. Trees are compared through a canonical text form
+(`tests/ast-repr.ts` on the real side, `запись.sable` on the other): one node per
+line, positions never serialised — the real lexer counts columns in UTF-16 code
+units and Sable counts characters, and on emoji they diverge legitimately.
+
 A file with deliberately broken syntax is a result too: both must refuse, and
-refuse at the same time. On top of that, about fifteen spellings the repository
-may never contain are checked: `1..5` against `1.5`, `1e` with no exponent, a
-string inside an interpolation, an okina in a name.
+refuse at the same time. A matching refusal is still a match, so a front end that
+always refuses would pass the whole cross-check; to keep that hole shut, the test
+separately requires most files to have actually parsed. Beyond the repository,
+about fifty spellings it may never contain are checked: `2 ^ 3 ^ 2`, `-2 ^ 2`,
+`??` against `||`, a lambda against parentheses, `{}` as a dictionary and as a
+block, `finally` without `try`, a repeated name in an import list.
 
-The value of this work is not that it sounds impressive but what it finds. Out
-of it came `char`/`code` — without them you cannot decode `\u{...}` in the
-language itself — `args()` (file paths had to arrive over stdin, because a
-program could not reach its command-line arguments) and the fix for quadratic
-character access on strings.
+Both passes over the whole repository take about three seconds, and the parser's
+descent needs roughly 160 frames out of 900 — the call ceiling is not in the way.
+
+The value of this work is not that it sounds impressive but what it finds. Out of
+it came `char`/`code` — without them you cannot decode `\u{...}` in the language
+itself — `args()` (file paths had to arrive over stdin, because a program could
+not reach its command-line arguments), the fill layout for dictionaries in the
+formatter, and the fix for quadratic character access on strings.
 
 ## What is still the bottleneck
 
