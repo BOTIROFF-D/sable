@@ -1,0 +1,28 @@
+// Мост между символом и его номером: без него разбор «\u{...}» на самом языке
+// написать нельзя — это выяснилось, когда лексер Sable переписали на Sable.
+print(char(65), char(1046), char(0x1F600))
+print(code("A"), code("Ж"), code("😀"))
+
+// code берёт первый символ, а не требует строку ровно из одного.
+print(code("абв"))
+
+// Круг замыкается: номер → символ → номер.
+let ok = true
+for n in [65, 1046, 0x2014, 0x1F600] {
+  if code(char(n)) != n { ok = false }
+}
+print("круг замкнулся:", ok)
+
+// Собрать строку из номеров — то, ради чего это и делалось.
+let буквы = []
+for n in 0x0410..0x0416 { буквы.push(char(n)) }
+print(буквы.join(""))
+
+try { print(char(1114112)) } catch e { print(e.message) }
+try { print(char(-1)) } catch e { print(e.message) }
+// Половина суррогатной пары символа не образует: вернув её, мы отдали бы
+// наружу строку, которую нельзя ни напечатать, ни сравнить.
+try { print(char(0xD800)) } catch e { print(e.message) }
+try { print(char(1.5)) } catch e { print(e.message) }
+try { print(code("")) } catch e { print(e.message) }
+try { print(code(65)) } catch e { print(e.message) }

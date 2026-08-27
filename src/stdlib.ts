@@ -104,6 +104,29 @@ export function installGlobals(interp: Interpreter): void {
   def('repr', 1, 1, (args) => repr(arg(args, 0)));
   def('bool', 1, 1, (args) => truthy(arg(args, 0)));
 
+  // Мост между символом и его номером. Без него на самом языке нельзя написать
+  // разбор escape-последовательности «\u{...}» — это и обнаружилось, когда
+  // лексер Sable переписали на Sable.
+  def('char', 1, 1, (args, span) => {
+    const code = wantInt('char', args, 0, span);
+    if (code < 0 || code > 0x10FFFF) {
+      throw runtimeError(`номер символа ${code} вне допустимого диапазона 0..1114111`, span);
+    }
+    // Половинки суррогатной пары сами по себе символа не образуют: вернув такую,
+    // мы бы отдали наружу строку, которую нельзя ни напечатать, ни сравнить.
+    if (code >= 0xD800 && code <= 0xDFFF) {
+      throw runtimeError(`номер ${code} — половина суррогатной пары, отдельного символа у него нет`, span);
+    }
+    return String.fromCodePoint(code);
+  });
+
+  def('code', 1, 1, (args, span) => {
+    const text = wantString('code', args, 0, span);
+    const first = text.codePointAt(0);
+    if (first === undefined) throw runtimeError('«code» ожидает непустую строку', span);
+    return first;
+  });
+
   def('num', 1, 2, (args, span) => {
     const v = arg(args, 0);
     if (typeof v === 'number') return v;

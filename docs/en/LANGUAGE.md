@@ -579,6 +579,24 @@ syntax error.
 **Types and conversion**
 `type(v)` · `str(v)` · `repr(v)` as in code · `num(v, fallback?)` · `int(v)` drops the fraction · `bool(v)` · `len(v)`
 
+**Characters and their numbers**
+`char(number)` character by Unicode code point · `code(text)` code point of the first character
+
+```sable
+print(char(1046), code("Ж"))
+print(code(char(0x1F600)))
+```
+
+```text
+Ж 1046
+128512
+```
+
+A number outside `0..1114111`, or half of a surrogate pair, is an error rather
+than a silent substitution. Without this pair you cannot write `\u{...}` decoding
+in the language itself — which is how it came up, when Sable's lexer was
+rewritten in Sable.
+
 **Numbers**
 `abs` `floor` `ceil` `round(n, digits?)` `sqrt` `pow(a, b)` `min(…)` `max(…)`
 `sign(n)` -1, 0 or 1 · `clamp(n, lo, hi)` forces a number into bounds ·
