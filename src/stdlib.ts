@@ -310,6 +310,10 @@ export function installGlobals(interp: Interpreter): void {
     }
   });
 
+  // Список каждый раз новый: программа вправе его перебирать и менять,
+  // и это не должно доставаться следующему вызову.
+  def('args', 0, 0, () => (interp.host.args ?? []).slice() as Value[]);
+
   def('input', 0, 1, (args, span) => {
     if (args.length > 0) interp.host.write(toStr(arg(args, 0)));
     return readLineSync(span);

@@ -154,7 +154,7 @@ function formatFiles(args: string[]): number {
   return 0;
 }
 
-function runFile(path: string): number {
+function runFile(path: string, rest: string[]): number {
   const full = resolve(path);
   let source: string;
   try {
@@ -183,7 +183,7 @@ function runFile(path: string): number {
     throw e;
   }
 
-  const interp = new Interpreter(undefined, full);
+  const interp = new Interpreter({ write: (t) => process.stdout.write(t), args: rest }, full);
   try {
     interp.run(program);
     return 0;
@@ -370,7 +370,7 @@ const HELP_REPL = `
 `;
 
 const HELP_ROWS: Array<[string, string]> = [
-  [`sable <файл${EXT}>`, 'выполнить файл'],
+  [`sable <файл${EXT}> [аргументы]`, 'выполнить файл; аргументы видны как args()'],
   ['sable', 'интерактивный режим (REPL)'],
   ['sable -e "<код>"', 'выполнить строку кода'],
   [`sable --check <файл${EXT}>`, 'проверить, не запуская'],
@@ -411,7 +411,7 @@ async function main(): Promise<number> {
   if (args[0] === '-e') {
     const source = args[1];
     if (source === undefined) { process.stderr.write('после -e нужен код\n'); return 64; }
-    const interp = new Interpreter();
+    const interp = new Interpreter({ write: (t) => process.stdout.write(t), args: args.slice(2) });
     try {
       runSource(source, '<-e>', interp);
       return 0;
@@ -421,7 +421,7 @@ async function main(): Promise<number> {
     }
   }
 
-  return runFile(args[0]!);
+  return runFile(args[0]!, args.slice(1));
 }
 
 /**

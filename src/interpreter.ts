@@ -104,6 +104,12 @@ const MAX_LIST = 50_000_000;
 export type Host = {
   /** Куда уходит print. Подменяется в тестах и REPL. */
   write: (text: string) => void;
+  /**
+   * Аргументы командной строки — то, что стоит после имени файла. Их отдаёт
+   * `args()`. Не читаются из `process` напрямую намеренно: в песочнице браузера
+   * никакого `process` нет, а хозяин там свой.
+   */
+  args?: string[];
 };
 
 export class Interpreter {
