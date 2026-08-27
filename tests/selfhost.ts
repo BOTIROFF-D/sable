@@ -1,14 +1,15 @@
-// Самоприменение: лексер Sable, написанный на Sable, обязан выдавать тот же
-// поток лексем, что и настоящий лексер на TypeScript.
+// Самоприменение: лексер и парсер Sable, написанные на Sable, обязаны выдавать
+// то же, что настоящие — лексема в лексему и узел в узел.
 //
 // Сверка идёт не на паре показательных примеров, а на каждом файле `.sable`
-// в репозитории — включая сам selfhost/lexer.sable, то есть язык разбирает
-// собственный исходник. Расхождение хоть в одной лексеме валит набор.
+// в репозитории — включая исходники самих лексера и парсера, то есть язык
+// разбирает собственный перёд. Расхождение хоть в одном узле валит набор.
 //
-// Отдельно проверяются записи, которых в обычном коде почти не встретишь:
-// вложенные комментарии, строка со вставкой внутри строки, «1..5» против
-// «1.5», «1e» без показателя. Именно на них ломаются лексеры, а до репозитория
-// такие случаи могут и не дойти.
+// Файл с намеренно битым синтаксисом — тоже результат: отказаться обязаны оба
+// и одновременно. Сверх репозитория проверяются записи, которых в нём может и
+// не быть: вложенные комментарии, строка внутри вставки, «1..5» против «1.5»,
+// приоритет степени и унарного минуса. Именно на них ломаются разборщики,
+// а до репозитория такие случаи могут и не дойти.
 //
 // Запуск: node tests/selfhost.ts
 import { spawnSync } from 'node:child_process';
@@ -17,11 +18,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tokenize } from '../src/lexer.ts';
+import { parse } from '../src/parser.ts';
 import type { Token } from '../src/token.ts';
+import { reprProgram } from './ast-repr.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
-const DRIVER = join(ROOT, 'selfhost', 'main.sable');
+
+/** Что печатает перёд на Sable вместо результата, когда разбор не удался. */
+const REFUSED = '!!! отказ';
 
 const problems: string[] = [];
 const ok = (what: string) => process.stdout.write(`  ✓ ${what}\n`);
@@ -31,9 +36,6 @@ const fail = (what: string, why: string) => {
 };
 
 /** Не заходим в служебные и собранные каталоги: там чужие файлы. */
-/** Что печатает перёд на Sable вместо потока, когда разбор не удался. */
-const REFUSED = '!!! отказ';
-
 const SKIP = new Set(['node_modules', '.git', 'dist', '.github']);
 
 function sableFiles(dir: string, found: string[] = []): string[] {
@@ -47,11 +49,11 @@ function sableFiles(dir: string, found: string[] = []): string[] {
 }
 
 /**
- * Каноническая запись потока. Позиции сюда не входят намеренно: настоящий
- * лексер считает колонки в единицах UTF-16, а Sable — в символах, и на эмодзи
- * они расходятся законно. Всё остальное обязано совпадать посимвольно.
+ * Каноническая запись потока лексем. Позиции сюда не входят намеренно:
+ * настоящий лексер считает колонки в единицах UTF-16, а Sable — в символах,
+ * и на эмодзи они расходятся законно. Всё остальное обязано совпадать.
  */
-function canon(tokens: Token[]): string {
+function canonTokens(tokens: Token[]): string {
   return tokens.map((t) => {
     if (t.type === 'NUMBER') return `NUMBER ${String(t.value)}`;
     if (t.type === 'IDENT') return `IDENT ${t.lexeme}`;
@@ -61,18 +63,21 @@ function canon(tokens: Token[]): string {
         ? `STRING ${String(t.value)}`
         : `STRING @${t.parts.filter((p) => p.kind === 'expr').length}`;
     }
-    return t.type;
+    // Для остальных сверяется и сама запись: «=» вместо «==» не меняет вида
+    // лексемы, но меняет смысл выражения — парсер берёт оператор отсюда.
+    if (t.type === 'NEWLINE' || t.type === 'EOF') return t.type;
+    return `${t.type} ${t.lexeme}`;
   }).join('\n');
 }
 
 /**
- * Прогоняет самодельный лексер по списку файлов за один запуск. Один процесс на
- * весь список, а не на файл: разбор самого лексера занимает больше, чем разбор
+ * Прогоняет перёд на Sable по списку файлов за один запуск. Один процесс на
+ * весь список, а не на файл: разбор самого парсера занимает больше, чем разбор
  * иного файла из списка.
  */
-function selfhost(paths: string[]): Map<string, string> {
+function selfhost(driver: string, paths: string[]): Map<string, string> {
   const sent = paths.map((p) => relative(ROOT, p));
-  const r = spawnSync(process.execPath, [CLI, DRIVER, ...sent], {
+  const r = spawnSync(process.execPath, [CLI, join(ROOT, 'selfhost', driver), ...sent], {
     cwd: ROOT,
     encoding: 'utf8',
     maxBuffer: 256 * 1024 * 1024,
@@ -84,8 +89,8 @@ function selfhost(paths: string[]): Map<string, string> {
   const byName = new Map<string, string>();
   let file = '';
   let lines: string[] = [];
-  // Последний перевод строки вывода даёт пустой хвост — в потоке лексем пустых
-  // строк не бывает, так что он всегда лишний.
+  // Последний перевод строки вывода даёт пустой хвост — в записи результата
+  // пустых строк не бывает, так что он всегда лишний.
   const done = () => {
     if (lines[lines.length - 1] === '') lines.pop();
     byName.set(file, lines.join('\n'));
@@ -111,51 +116,93 @@ function selfhost(paths: string[]): Map<string, string> {
   return streams;
 }
 
-// ---- каждый файл репозитория ----------------------------------------------
+type Stage = {
+  /** Как называется то, что сверяется, — для сообщений. */
+  name: string;
+  /** Программа на Sable, печатающая результат для каждого файла из аргументов. */
+  driver: string;
+  /** Настоящий перёд. Бросает — значит отказывается разбирать. */
+  real: (source: string, file: string) => string;
+  /** Единица расхождения: «лексема 12» или «узел 12». */
+  unit: string;
+  /** Записи, которых в репозитории может и не быть. */
+  tricky: Array<[string, string]>;
+};
 
-const files = sableFiles(ROOT);
-if (files.length < 30) fail('поиск файлов', `нашлось всего ${files.length} — похоже, обход сломан`);
-
-let streams: Map<string, string>;
-try {
-  streams = selfhost(files);
-} catch (e) {
-  fail('запуск переда на Sable', (e as Error).message);
-  process.stdout.write(`\nсамоприменение: ${problems[0]}\n`);
-  process.exitCode = 1;
-  throw new Error('перёд на Sable не запустился');
+/** Первое расхождение: читать целиком незачем, а номер строки указывает место. */
+function firstDiff(expected: string, actual: string, unit: string): string {
+  const a = expected.split('\n');
+  const b = actual.split('\n');
+  const i = a.findIndex((line, n) => line !== b[n]);
+  const at = i < 0 ? a.length : i;
+  return `${unit} ${at + 1}: настоящий даёт «${a[at] ?? '(конца нет)'}»,`
+    + ` перёд на Sable — «${b[at] ?? '(конца нет)'}»`;
 }
 
-let matched = 0;
-for (const path of files) {
-  const name = relative(ROOT, path);
-  const source = readFileSync(path, 'utf8');
-
-  // Файл с намеренно битым синтаксисом — тоже результат: оба лексера обязаны
-  // отказаться, и отказаться одновременно.
+function compare(stage: Stage, name: string, source: string, expectedFile: string, got: string | undefined): boolean {
   let expected: string;
   try {
-    expected = canon(tokenize(source, name));
+    expected = stage.real(source, expectedFile);
   } catch {
     expected = REFUSED;
   }
-
-  const got = streams.get(path);
-  if (got === undefined) { fail(name, 'перёд на Sable ничего не выдал'); continue; }
-  if (got === expected) { matched++; continue; }
-  if (expected === REFUSED) { fail(name, 'настоящий лексер отказался, перёд на Sable разобрал'); continue; }
-  if (got === REFUSED) { fail(name, 'перёд на Sable отказался, настоящий лексер разобрал'); continue; }
-
-  const a = expected.split('\n');
-  const b = got.split('\n');
-  const i = a.findIndex((line, n) => line !== b[n]);
-  fail(name, `лексема ${i + 1}: настоящий лексер даёт «${a[i]}», перёд на Sable — «${b[i] ?? '(конца нет)'}»`);
+  if (got === undefined) { fail(name, 'перёд на Sable ничего не выдал'); return false; }
+  if (got === expected) return true;
+  if (expected === REFUSED) { fail(name, 'настоящий перёд отказался, перёд на Sable разобрал'); return false; }
+  if (got === REFUSED) { fail(name, 'перёд на Sable отказался, настоящий разобрал'); return false; }
+  fail(name, firstDiff(expected, got, stage.unit));
+  return false;
 }
-if (problems.length === 0) ok(`${matched} файлов репозитория разобраны одинаково`);
 
-// ---- записи, которых в репозитории может и не быть -------------------------
+function runStage(stage: Stage, files: string[]): void {
+  let streams: Map<string, string>;
+  try {
+    streams = selfhost(stage.driver, files);
+  } catch (e) {
+    fail(`${stage.name}: запуск переда на Sable`, (e as Error).message);
+    return;
+  }
 
-const TRICKY: Array<[string, string]> = [
+  let matched = 0;
+  let real = 0;
+  const before = problems.length;
+  for (const path of files) {
+    const name = relative(ROOT, path);
+    const got = streams.get(path);
+    if (got !== undefined && got !== REFUSED) real++;
+    if (compare(stage, `${stage.name}: ${name}`, readFileSync(path, 'utf8'), name, got)) matched++;
+  }
+  // Совпавший отказ — тоже совпадение, поэтому перёд, который отказывается
+  // всегда, прошёл бы сверку целиком. Требуем, чтобы разобранных было
+  // большинство: в репозитории заведомо битых файлов меньше двух десятков.
+  if (real < files.length - 40) {
+    fail(`${stage.name}: слишком много отказов`, `разобрано ${real} из ${files.length}`);
+  }
+  if (problems.length === before) {
+    ok(`${stage.name}: ${matched} файлов репозитория сошлись, из них разобрано ${real}`);
+  }
+
+  const box = mkdtempSync(join(tmpdir(), 'sable-selfhost-'));
+  const cases = stage.tricky.map(([name, src], i) => {
+    const path = join(box, `case${i}.sable`);
+    writeFileSync(path, src, 'utf8');
+    return { name, src, path };
+  });
+  try {
+    const got = selfhost(stage.driver, cases.map((c) => c.path));
+    for (const c of cases) {
+      if (compare(stage, `${stage.name}: ${c.name}`, c.src, c.name, got.get(c.path))) ok(`${stage.name}: ${c.name}`);
+    }
+  } catch (e) {
+    fail(`${stage.name}: трудные записи`, (e as Error).message);
+  } finally {
+    rmSync(box, { recursive: true, force: true });
+  }
+}
+
+// ---- что сверяем -----------------------------------------------------------
+
+const LEXER_TRICKY: Array<[string, string]> = [
   ['вложенный комментарий', 'let a = 1 /* внешний /* внутренний */ ещё внешний */ + 2\n'],
   ['строка во вставке', 'print("итог: ${ m.get("ключ") } готово")\n'],
   ['фигурная скобка во вставке', 'print("${ { "a": 1 }.len() }")\n'],
@@ -175,35 +222,91 @@ const TRICKY: Array<[string, string]> = [
   ['только комментарий', '// ничего\n'],
 ];
 
-const BOX = mkdtempSync(join(tmpdir(), 'sable-selfhost-'));
-const trickyPaths = TRICKY.map(([name, src], i) => {
-  const path = join(BOX, `case${i}.sable`);
-  writeFileSync(path, src, 'utf8');
-  return { name, src, path };
-});
+const PARSER_TRICKY: Array<[string, string]> = [
+  // Приоритеты, которые легче всего перепутать.
+  ['степень правоассоциативна', 'print(2 ^ 3 ^ 2)\n'],
+  ['степень крепче унарного минуса', 'print(-2 ^ 2)\n'],
+  ['диапазон между сравнением и сложением', 'print(1 + 2..3 * 4 == x)\n'],
+  ['«??» слабее «||»', 'print(a ?? b || c && d)\n'],
+  ['тернарное правоассоциативно', 'print(a ? b : c ? d : e)\n'],
+  ['присваивание правоассоциативно', 'a = b = c\n'],
+  ['составное присваивание хранит оператор', 'xs[i()] += 1\nm.поле *= 2\n'],
 
-try {
-  const got = selfhost(trickyPaths.map((c) => c.path));
-  for (const c of trickyPaths) {
-    const expected = canon(tokenize(c.src, c.name));
-    const actual = got.get(c.path);
-    if (actual === REFUSED) { fail(c.name, 'перёд на Sable отказался разбирать'); continue; }
-    if (actual === expected) { ok(c.name); continue; }
-    const a = expected.split('\n');
-    const b = (actual ?? '').split('\n');
-    const i = a.findIndex((line, n) => line !== b[n]);
-    fail(c.name, `лексема ${i + 1}: ожидалось «${a[i]}», получено «${b[i] ?? '(конца нет)'}»`);
-  }
-} catch (e) {
-  fail('трудные записи', (e as Error).message);
-} finally {
-  rmSync(BOX, { recursive: true, force: true });
-}
+  // Формы функций.
+  ['короткая лямбда', 'print(xs.map(x -> x * 2))\n'],
+  ['лямбда со скобками', 'print(f((a, b) -> a + b))\n'],
+  ['лямбда без аргументов', 'print(f(() -> 1))\n'],
+  ['скобки, которые не лямбда', 'print((a + b) * c)\n'],
+  ['fn со стрелкой', 'let f = fn (x) -> x + 1\n'],
+  ['именованная функция как значение', 'let f = fn имя(x) { return x }\n'],
 
-const total = TRICKY.length + 1;
+  // Словарь против блока.
+  ['словарь в условии нужно брать в скобки', 'if ({а: 1}).len() > 0 { print(1) }\n'],
+  ['вычисляемый ключ', 'let m = {[k + 1]: 2, 3: "три", true: "да", "с пробелом": 1}\n'],
+  ['словарь с переносами и висячей запятой', 'let m = {\n  а: 1,\n  б: 2,\n}\n'],
+  ['пустые список и словарь', 'print([], {})\n'],
+
+  // Инструкции.
+  ['else if цепочкой', 'if a { print(1) } else if b { print(2) } else { print(3) }\n'],
+  ['«}» и «else» на разных строках', 'if a {\n  print(1)\n}\nelse {\n  print(2)\n}\n'],
+  ['try/catch/finally', 'try { f() } catch e { g(e) } finally { h() }\n'],
+  ['try без catch', 'try { f() }\nfinally { h() }\n'],
+  ['catch без имени', 'try { f() } catch { g() }\n'],
+  ['return без значения', 'fn f() {\n  return\n}\n'],
+  ['пустой блок как инструкция', '{\n}\n'],
+  ['точка с запятой вместо переноса', 'let a = 1; let b = 2; print(a, b)\n'],
+
+  // Импорт.
+  ['импорт целиком', 'import "u.sable" as u\n'],
+  ['выборочный импорт с переименованием', 'import "u.sable" as {а, б as в}\n'],
+
+  // Структуры.
+  ['структура с полями и методами', 'struct T {\n  x = 1\n  y\n  fn m(a, b = 2) { return a }\n}\n'],
+
+  // Отказы: оба перёда обязаны отказаться одновременно.
+  ['битый синтаксис', 'fn f(a b) { return a }\n'],
+  ['try без catch и finally', 'try { f() }\n'],
+  ['присваивание не переменной', 'f() = 1\n'],
+  ['повтор параметра', 'fn f(a, a) { return a }\n'],
+  ['обязательный параметр после необязательного', 'fn f(a = 1, b) { return a }\n'],
+  ['повтор имени в структуре', 'struct T {\n  x\n  fn x() { return 1 }\n}\n'],
+  ['имя дважды в списке импорта', 'import "u.sable" as {а, б as а}\n'],
+  ['пустой список импорта', 'import "u.sable" as {}\n'],
+  ['import внутри блока', 'fn f() {\n  import "u.sable" as u\n}\n'],
+  ['второй finally', 'try { f() } finally { a() } finally { b() }\n'],
+  ['finally без try', 'finally { a() }\n'],
+  ['словарь там, где ждут тело', 'if {а: 1} { print(1) }\n'],
+
+  ['пустой файл', ''],
+  ['только комментарий', '// ничего\n'],
+];
+
+const STAGES: Stage[] = [
+  {
+    name: 'лексемы',
+    driver: 'main.sable',
+    real: (source, file) => canonTokens(tokenize(source, file)),
+    unit: 'лексема',
+    tricky: LEXER_TRICKY,
+  },
+  {
+    name: 'дерево',
+    driver: 'дерево.sable',
+    real: (source, file) => reprProgram(parse(tokenize(source, file), file)),
+    unit: 'узел',
+    tricky: PARSER_TRICKY,
+  },
+];
+
+const files = sableFiles(ROOT);
+if (files.length < 30) fail('поиск файлов', `нашлось всего ${files.length} — похоже, обход сломан`);
+
+for (const stage of STAGES) runStage(stage, files);
+
+const total = 2 + LEXER_TRICKY.length + PARSER_TRICKY.length;
 process.stdout.write(
   problems.length === 0
-    ? `\nсамоприменение: ${total}/${total} прошло (${matched} файлов сверено)\n`
+    ? `\nсамоприменение: ${total}/${total} прошло (${files.length} файлов сверено дважды)\n`
     : `\nсамоприменение: расхождений ${problems.length}\n\n${problems.join('\n')}\n`,
 );
 if (problems.length > 0) process.exitCode = 1;
