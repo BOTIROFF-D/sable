@@ -11,7 +11,7 @@ import { findMethodEntry, getMethod, installGlobals, methodNames, repeatText, ty
 import {
   SableModule, NativeFn, SableFunction, SableRange, StructDef, StructInstance,
   type CompiledFn,
-  asMapKey, charAt, charLength, equals, isCallable, repr, toStr, truthy, typeName,
+  asMapKey, charAt, charLength, charsOf, equals, isCallable, repr, toStr, truthy, typeName,
   type MapKey, type Value,
 } from './values.ts';
 
@@ -612,7 +612,7 @@ export class Interpreter {
   iterate(seq: Value, span: Span): Value[] {
     if (Array.isArray(seq)) return [...seq];
     if (seq instanceof SableRange) return seq.toList();
-    if (typeof seq === 'string') return [...seq];
+    if (typeof seq === 'string') return charsOf(seq);
     if (seq instanceof Map) return [...seq.keys()] as Value[];
     throw runtimeError(`по значению типа ${typeName(seq)} нельзя пройти циклом for`, span);
   }

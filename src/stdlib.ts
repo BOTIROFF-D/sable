@@ -3,7 +3,7 @@ import { SableError, runtimeError, type Span } from './errors.ts';
 import type { Interpreter } from './interpreter.ts';
 import {
   NativeFn, SableFunction, SableRange, StructDef, StructInstance,
-  asMapKey, equals, repr, toStr, truthy, typeName,
+  asMapKey, charLength, charsOf, equals, isPlain, repr, toStr, truthy, typeName,
   type MapKey, type Value,
 } from './values.ts';
 
@@ -413,12 +413,12 @@ function asSeq(fn: string, v: Value, span: Span): Value[] {
   // Копия, а не сам список: колбэк вправе менять исходный прямо во время обхода.
   if (Array.isArray(v)) return v.slice();
   if (v instanceof SableRange) return v.toList();
-  if (typeof v === 'string') return [...v];
+  if (typeof v === 'string') return charsOf(v);
   throw runtimeError(`«${fn}» ожидает список, строку или диапазон, а получила ${typeName(v)}`, span);
 }
 
 function lengthOf(v: Value, span: Span): number {
-  if (typeof v === 'string') return [...v].length;
+  if (typeof v === 'string') return charLength(v);
   if (Array.isArray(v)) return v.length;
   if (v instanceof Map) return v.size;
   if (v instanceof SableRange) return v.length;
@@ -511,26 +511,33 @@ const m = (min: number, max: number, impl: (self: never, args: Value[], span: Sp
   ({ min, max, impl });
 
 const STRING_METHODS: MethodTable = {
-  len: m(0, 0, (s: string) => [...s].length),
+  len: m(0, 0, (s: string) => charLength(s)),
   upper: m(0, 0, (s: string) => s.toUpperCase()),
   lower: m(0, 0, (s: string) => s.toLowerCase()),
   trim: m(0, 0, (s: string) => s.trim()),
-  chars: m(0, 0, (s: string) => [...s] as Value[]),
-  reverse: m(0, 0, (s: string) => [...s].reverse().join('')),
+  chars: m(0, 0, (s: string) => charsOf(s) as Value[]),
+  reverse: m(0, 0, (s: string) => charsOf(s).reverse().join('')),
   contains: m(1, 1, (s: string, a, sp) => s.includes(wantString('contains', a, 0, sp))),
   starts_with: m(1, 1, (s: string, a, sp) => s.startsWith(wantString('starts_with', a, 0, sp))),
   ends_with: m(1, 1, (s: string, a, sp) => s.endsWith(wantString('ends_with', a, 0, sp))),
   // Позиция считается в символах, а не в кодовых единицах UTF-16 — чтобы совпадать с len() и slice().
   index_of: m(1, 1, (s: string, a, sp) => {
     const at = s.indexOf(wantString('index_of', a, 0, sp));
-    return at < 0 ? -1 : [...s.slice(0, at)].length;
+    return at < 0 ? -1 : charLength(s.slice(0, at));
   }),
   replace: m(2, 2, (s: string, a, sp) =>
     s.split(wantString('replace', a, 0, sp)).join(wantString('replace', a, 1, sp))),
   split: m(0, 1, (s: string, a, sp) =>
-    (a.length === 0 ? [...s] : wantString('split', a, 0, sp) === '' ? [...s] : s.split(wantString('split', a, 0, sp))) as Value[]),
+    (a.length === 0 ? charsOf(s) : wantString('split', a, 0, sp) === '' ? charsOf(s) : s.split(wantString('split', a, 0, sp))) as Value[]),
   slice: m(1, 2, (s: string, a, sp) => {
-    const chars = [...s];
+    // У строки без суррогатных пар индекс символа совпадает с индексом кодовой
+    // единицы — режем напрямую, не раскладывая строку в список. Раскладка
+    // стоила бы длины всей строки на каждый вызов, а не длины куска.
+    if (isPlain(s)) {
+      const [from, to] = sliceBounds('slice', s.length, a, sp);
+      return s.slice(from, to);
+    }
+    const chars = charsOf(s);
     const [from, to] = sliceBounds('slice', chars.length, a, sp);
     return chars.slice(from, to).join('');
   }),
@@ -857,9 +864,9 @@ export function repeatText(s: string, n: number, span: Span): string {
 function padText(s: string, args: Value[], span: Span, fn: string, atStart: boolean): string {
   const want = wantInt(fn, args, 0, span);
   const fill = args.length > 1 ? wantString(fn, args, 1, span) : ' ';
-  const chars = [...s];
+  const chars = charsOf(s);
   if (chars.length >= want || fill === '') return s;
-  const padChars = [...fill];
+  const padChars = charsOf(fill);
   const need = want - chars.length;
   let pad = '';
   for (let i = 0; i < need; i++) pad += padChars[i % padChars.length];
@@ -906,7 +913,7 @@ function keyCompare(fn: string, a: Value, b: Value, span: Span): number {
 
 /** Первая буква заглавная, остальное не трогаем: «iPhone» не должен стать «Iphone». */
 function capFirst(s: string): string {
-  const chars = [...s];
+  const chars = charsOf(s);
   if (chars.length === 0) return s;
   return chars[0]!.toUpperCase() + chars.slice(1).join('');
 }

@@ -248,11 +248,63 @@ function isPair(s: string, i: number): boolean {
   return lo >= 0xdc00 && lo <= 0xdfff;
 }
 
+/** Есть ли в строке кодовая единица, которая может открывать суррогатную пару. */
+const WIDE = /[\uD800-\uDBFF]/;
+
+/**
+ * Строка без суррогатных пар — та, у которой символ равен кодовой единице:
+ * по ней можно ходить индексом напрямую. Ответ на этот вопрос запоминается, и
+ * не ради микросекунд. Без памяти каждое обращение к символу пересчитывает
+ * строку целиком, и обычный посимвольный проход становится квадратичным:
+ * лексер Sable, написанный на Sable, разбирал файл в 300 КБ минутами.
+ *
+ * Помним две последние строки, а не карту: карта в JavaScript сравнивает ключи
+ * по содержимому, и две разные строки с одинаковым текстом обходятся ей в
+ * полное сравнение на каждый поиск — ровно та цена, которую мы убираем.
+ * Двух ячеек хватает на цикл, который идёт сразу по двум строкам.
+ *
+ * Короткие строки мимо памяти: проверить их заново дешевле, чем занимать место.
+ */
+const PLAIN_MIN = 64;
+const seen = ['', ''];
+const wasPlain = [true, true];
+let slot = 0;
+
+export function isPlain(s: string): boolean {
+  if (s.length < PLAIN_MIN) return !WIDE.test(s);
+
+  for (let i = 0; i < 2; i++) {
+    // Длина сначала: она под рукой и отсекает почти все несовпадения даром.
+    if (s.length !== seen[i]!.length || s !== seen[i]) continue;
+    // Запоминаем именно этот объект. Совпадение могло стоить полного сравнения
+    // текстов — две равные, но разные строки JavaScript так и сравнивает,
+    // каждый раз заново. Со следующего обращения сравнение будет по ссылке.
+    seen[i] = s;
+    return wasPlain[i]!;
+  }
+
+  const answer = !WIDE.test(s);
+  seen[slot] = s;
+  wasPlain[slot] = answer;
+  slot ^= 1;
+  return answer;
+}
+
 /** Длина строки в символах. */
 export function charLength(s: string): number {
+  if (isPlain(s)) return s.length;
   let n = 0;
   for (let i = 0; i < s.length; i += isPair(s, i) ? 2 : 1) n++;
   return n;
+}
+
+/**
+ * Символы строки списком. Отдельная функция, а не `[...s]` по месту: для строки
+ * без суррогатных пар разбивка обходится без итератора по кодовым точкам,
+ * который на длинных строках заметно дороже.
+ */
+export function charsOf(s: string): string[] {
+  return isPlain(s) ? s.split('') : [...s];
 }
 
 /**
@@ -260,6 +312,10 @@ export function charLength(s: string): number {
  * null — индекс вне строки (о длине для сообщения спросит вызывающий).
  */
 export function charAt(s: string, index: number): string | null {
+  if (isPlain(s)) {
+    const i = index < 0 ? index + s.length : index;
+    return i >= 0 && i < s.length ? s[i]! : null;
+  }
   let want = index;
   if (want < 0) {
     want += charLength(s);
