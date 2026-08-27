@@ -294,7 +294,9 @@ string inside an interpolation, an okina in a name.
 
 The value of this work is not that it sounds impressive but what it finds. Out
 of it came `char`/`code` — without them you cannot decode `\u{...}` in the
-language itself — and the fix for quadratic character access on strings.
+language itself — `args()` (file paths had to arrive over stdin, because a
+program could not reach its command-line arguments) and the fix for quadratic
+character access on strings.
 
 ## What is still the bottleneck
 

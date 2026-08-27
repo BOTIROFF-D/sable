@@ -574,7 +574,13 @@ syntax error.
 **Output and input**
 `print(…)` space-separated, with a newline · `write(…)` without a newline ·
 `input(prompt?)` a line from stdin, `nil` at end of input ·
-`read_file(path)` · `write_file(path, text)`
+`read_file(path)` · `write_file(path, text)` ·
+`args()` command-line arguments
+
+`args()` returns whatever follows the file name: `sable report.sable may 2026`
+gives `["may", "2026"]`. The program's own name is not in the list — it has no
+use for it. The list is fresh on every call, so mutating it is safe. In the
+browser sandbox there are no arguments and the list is empty.
 
 **Types and conversion**
 `type(v)` · `str(v)` · `repr(v)` as in code · `num(v, fallback?)` · `int(v)` drops the fraction · `bool(v)` · `len(v)`
