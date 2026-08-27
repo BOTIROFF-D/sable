@@ -862,7 +862,7 @@ class Formatter {
           const entry = e.entries[k]!;
           const key = this.mapKey(entry.key, c, i, f);
           return key + ': ' + this.expr(entry.value, P_LOWEST, c + key.length + 2, i, f);
-        }, col, ind, flat);
+        }, col, ind, flat, true);
       }
 
       case 'Unary':
