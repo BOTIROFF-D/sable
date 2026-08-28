@@ -133,7 +133,7 @@
     },
     "builtins": {
       "name": "support.function.builtin.sable",
-      "match": "\\b(print|write|input|args|len|type|str|repr|num|int|bool|char|code|keys|values|entries|range|map|filter|reduce|sum|min|max|abs|floor|ceil|round|sqrt|pow|sign|clamp|log|exp|hypot|sin|cos|tan|asin|acos|atan|atan2|pi|random|random_int|now|clock|assert|error|read_file|write_file|to_json|from_json|zip|enumerate|sorted|reversed|from_entries|get|set|has|remove)\\s*(?=\\()"
+      "match": "\\b(print|write|input|args|len|type|str|repr|num|int|bool|char|code|keys|values|entries|range|map|filter|reduce|sum|min|max|abs|floor|ceil|round|sqrt|pow|sign|clamp|log|exp|hypot|sin|cos|tan|asin|acos|atan|atan2|pi|random|random_int|now|clock|apply|assert|error|read_file|write_file|to_json|from_json|zip|enumerate|sorted|reversed|from_entries|get|set|has|remove)\\s*(?=\\()"
     },
     "calls": {
       "match": "([A-Za-z_\\p{Cyrillic}][A-Za-z0-9_\\p{Cyrillic}\\u02BB\\u02BC]*)\\s*(?=\\()",

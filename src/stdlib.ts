@@ -265,6 +265,27 @@ export function installGlobals(interp: Interpreter): void {
   def('entries', 1, 1, (args, span) =>
     [...asMap('entries', arg(args, 0), span).entries()].map(([k, v]) => [k as Value, v]));
 
+  // Вызов с посчитанным списком аргументов. Без него программа не может ни
+  // перенаправить чужой вызов, ни позвать функцию, число аргументов которой
+  // выяснится только при выполнении: в языке нет ни развёртки списка, ни
+  // доступа к «остальным аргументам».
+  //
+  // Число аргументов проверяется как при обычном вызове, а не подрезается,
+  // как у колбэков: там подрезка спасает `xs.map(x -> x * 2)` от лишнего
+  // индекса, здесь же список — это ровно то, что просили передать.
+  def('apply', 2, 2, (args, span) => {
+    const f = arg(args, 0);
+    if (!(f instanceof SableFunction || f instanceof NativeFn)) {
+      throw runtimeError(`«apply» ожидает функцию первым аргументом, а получила ${typeName(f)}`, span);
+    }
+    const list = arg(args, 1);
+    if (!Array.isArray(list)) {
+      throw runtimeError(`«apply» ожидает список аргументов вторым аргументом, а получила ${typeName(list)}`, span);
+    }
+    // Копия: вызываемое вправе менять список, а он принадлежит зовущему.
+    return interp.callValue(f, list.slice(), span, 'apply');
+  });
+
   def('assert', 1, 2, (args, span) => {
     if (truthy(arg(args, 0))) return null;
     const msg = args.length > 1 ? toStr(arg(args, 1)) : 'проверка не прошла';
