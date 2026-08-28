@@ -577,6 +577,24 @@ syntax error.
 `read_file(path)` · `write_file(path, text)` ·
 `args()` command-line arguments
 
+**Calling**
+`apply(function, list)` call with a computed argument list
+
+```sable
+fn сумма(a, b, c = 10) { return a + b + c }
+print(apply(сумма, [1, 2]), apply(сумма, [1, 2, 3]))
+print(apply(max, [3, 9, 4]))
+```
+
+```text
+13 6
+9
+```
+
+The argument count is checked as in an ordinary call: extras are not dropped and
+missing ones are not forgiven. The language has no spread syntax at a call site —
+when the arguments are computed, `apply` is how you call.
+
 `args()` returns whatever follows the file name: `sable report.sable may 2026`
 gives `["may", "2026"]`. The program's own name is not in the list — it has no
 use for it. The list is fresh on every call, so mutating it is safe. In the
