@@ -9,7 +9,7 @@
   "scripts": {
     "sable": "node src/cli.ts",
     "repl": "node src/cli.ts",
-    "test": "node tests/run.ts && node tests/checker.ts && node tests/docs.ts && node tests/grammar.ts && node tests/format.ts && node tests/cli.ts && node tests/web.ts && node tests/scale.ts && node tests/selfhost.ts",
+    "test": "node tests/run.ts && node tests/checker.ts && node tests/docs.ts && node tests/grammar.ts && node tests/format.ts && node tests/cli.ts && node tests/web.ts && node tests/scale.ts && node tests/selfhost.ts && node tests/selfrun.ts",
     "check": "node src/cli.ts --check",
     "fmt": "node src/cli.ts fmt",
     "typecheck": "tsc --noEmit",
