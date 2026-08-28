@@ -1,0 +1,325 @@
+// Мост от имён к встроенным: то, чем интерпретатор Sable на Sable зовёт
+// стандартную библиотеку.
+//
+// В дереве от встроенной остаётся одно имя: в вызове «len(x)» стоит строка
+// «len» и ничего больше. Соблазн дописать len на Sable надо давить сразу —
+// тогда сверка с настоящим интерпретатором проверяла бы не язык, а вторую
+// реализацию стандартной библиотеки, и каждое расхождение пришлось бы искать
+// в ней. Мост поэтому не повторяет ни одной встроенной, а зовёт ровно те,
+// что объявлены в src/stdlib.ts.
+//
+// Словаря два, потому что функция и метод в языке — вещи разной природы.
+// Функция это значение первого класса, её кладут в словарь как есть. Метод
+// значением не берётся: «"abc".upper» — не выражение, метод существует только
+// в записи вызова. Значит каждый метод приходится оборачивать лямбдой
+// (получатель, список аргументов), и разбирать список ей приходится самой:
+// развёртки списка в записи вызова в языке нет, а apply умеет только функции.
+//
+// Читать оба словаря нужно свободными функциями — get(ФУНКЦИИ, имя),
+// has(МЕТОДЫ, имя), keys(МЕТОДЫ), len(МЕТОДЫ), — а не через точку. Здесь это не
+// вкусовщина: доступ через точку у словаря сначала ищет данные, а ключи «get»,
+// «has», «keys», «len», «set», «values», «entries» и «remove» в этих словарях
+// как раз есть. «МЕТОДЫ.has(имя)» достанет не метод словаря, а лямбду моста и
+// позовёт её с одним аргументом вместо двух.
+
+// ---- функции ---------------------------------------------------------------
+
+// Все встроенные функции из src/stdlib.ts, 58 имён, в порядке объявления.
+// Четырёх нет намеренно: random, random_int, now и clock отвечают разным на
+// одинаковый вход. Мост существует ради посимвольной сверки вывода двух
+// интерпретаторов, и с ними сверка падала бы через раз не по делу. Нужна
+// случайность или часы — их подставляет тот, кто запускает, осознанно.
+const ФУНКЦИИ = {
+  print: print,
+  write: write,
+  len: len,
+  type: type,
+  str: str,
+  repr: repr,
+  bool: bool,
+  char: char,
+  code: code,
+  num: num,
+  int: int,
+  abs: abs,
+  floor: floor,
+  ceil: ceil,
+  sqrt: sqrt,
+  pow: pow,
+  round: round,
+  min: min,
+  max: max,
+  sign: sign,
+  clamp: clamp,
+  exp: exp,
+  log: log,
+  hypot: hypot,
+  sin: sin,
+  cos: cos,
+  tan: tan,
+  atan: atan,
+  atan2: atan2,
+  asin: asin,
+  acos: acos,
+  pi: pi,
+  range: range,
+  get: get,
+  set: set,
+  has: has,
+  remove: remove,
+  keys: keys,
+  values: values,
+  entries: entries,
+  apply: apply,
+  assert: assert,
+  error: error,
+  read_file: read_file,
+  write_file: write_file,
+  to_json: to_json,
+  from_json: from_json,
+  args: args,
+  input: input,
+  map: map,
+  filter: filter,
+  reduce: reduce,
+  sum: sum,
+  zip: zip,
+  enumerate: enumerate,
+  sorted: sorted,
+  reversed: reversed,
+  from_entries: from_entries,
+}
+
+// ---- методы ----------------------------------------------------------------
+
+// Методы строк, списков и словарей — все 81 объявление из трёх таблиц
+// src/stdlib.ts. Имён из них вышло 70, а не 81: девять объявлены не в одной
+// таблице (len и is_empty есть во всех трёх; contains, index_of, reverse,
+// slice и count — у строки и списка; clone и filter — у списка и словаря),
+// и второй раз их заводить нечем: лямбда получателя не разбирает, «п.len()»
+// одинаково хорош для строки, списка, словаря и диапазона — нужную реализацию
+// найдёт сам вызов. Семьдесят первое имя — «list»
+// у диапазона: получателей с методами в языке четыре, и оставлять один из них
+// без моста значило бы, что «(0..3).list()» в интерпретаторе не заработает.
+//
+// Число аргументов — главная тонкость. Лямбда обязана позвать метод ровно с тем
+// числом, которое ей дали, и не своим числом: join() склеивает без разделителя,
+// join("-") — через дефис; sort() сравнивает по умолчанию, sort(f) — функцией;
+// get("b") на чужом ключе падает, get("b", 0) отдаёт запасное. Передать «сколько
+// дали» одной записью нельзя — развёртки списка в вызове нет, — поэтому каждая
+// лямбда перебирает числа сама: len(а) == 0, len(а) == 1 и так далее.
+//
+// Перебор идёт на одну ветку дальше, чем метод принимает, и это не запас на
+// будущее. Мост, зовущий upper() при живом «"т".upper(1)», проглатывает ошибку:
+// настоящий Sable откажется («„string.upper“ ожидает 0 аргументов, а получила
+// 1»), а мост промолчит и разойдётся с ним выводом. Лишний аргумент поэтому
+// доносится до самого метода — он и скажет своё. По той же причине перебор
+// начинается с нуля даже у методов с обязательными аргументами: недостача —
+// такая же ошибка, и сообщать о ней должен метод, а не мост.
+//
+// Двух лишних аргументов перебор уже не различает: до метода дойдёт один, и в
+// сообщении будет «получила 1» вместо «получила 2». Ловить это незачем — одного
+// лишнего хватает, чтобы вызов отказался, а программа с двумя лишними всё равно
+// не доживёт до сверки вывода.
+//
+// Пока ветки влезают в строку, лямбда однострочная; дальше тот же перебор
+// записан блоком — не по вкусу, а потому что форматтер иначе рвёт вызов по
+// аргументам, и таблица перестаёт читаться.
+//
+// push и format принимают сколько угодно, и перебирать им нечего. push добавляет
+// и возвращает сам список — значит любое число аргументов складывается свёрткой.
+// format так не разложить: он требует, чтобы подстановок {} было ровно столько,
+// сколько аргументов, и подстановка по одной пустила бы «{}» из значения в дело
+// как новую дырку. Ему остаётся перебор, оборванный на восьми: дальше в живом
+// коде не встречается, а молча звать не с тем числом хуже, чем сказать вслух.
+const МЕТОДЫ = {
+  len: (п, а) -> len(а) == 0 ? п.len() : п.len(а[0]),
+  upper: (п, а) -> len(а) == 0 ? п.upper() : п.upper(а[0]),
+  lower: (п, а) -> len(а) == 0 ? п.lower() : п.lower(а[0]),
+  trim: (п, а) -> len(а) == 0 ? п.trim() : п.trim(а[0]),
+  chars: (п, а) -> len(а) == 0 ? п.chars() : п.chars(а[0]),
+  reverse: (п, а) -> len(а) == 0 ? п.reverse() : п.reverse(а[0]),
+  contains: fn(п, а) {
+    if len(а) == 0 { return п.contains() }
+    if len(а) == 1 { return п.contains(а[0]) }
+    return п.contains(а[0], а[1])
+  },
+  starts_with: fn(п, а) {
+    if len(а) == 0 { return п.starts_with() }
+    if len(а) == 1 { return п.starts_with(а[0]) }
+    return п.starts_with(а[0], а[1])
+  },
+  ends_with: fn(п, а) {
+    if len(а) == 0 { return п.ends_with() }
+    if len(а) == 1 { return п.ends_with(а[0]) }
+    return п.ends_with(а[0], а[1])
+  },
+  index_of: fn(п, а) {
+    if len(а) == 0 { return п.index_of() }
+    if len(а) == 1 { return п.index_of(а[0]) }
+    return п.index_of(а[0], а[1])
+  },
+  replace: fn(п, а) {
+    if len(а) == 0 { return п.replace() }
+    if len(а) == 1 { return п.replace(а[0]) }
+    if len(а) == 2 { return п.replace(а[0], а[1]) }
+    return п.replace(а[0], а[1], а[2])
+  },
+  split: (п, а) -> len(а) == 0 ? п.split() : len(а) == 1 ? п.split(а[0]) : п.split(а[0], а[1]),
+  slice: fn(п, а) {
+    if len(а) == 0 { return п.slice() }
+    if len(а) == 1 { return п.slice(а[0]) }
+    if len(а) == 2 { return п.slice(а[0], а[1]) }
+    return п.slice(а[0], а[1], а[2])
+  },
+  repeat: (п, а) -> len(а) == 0 ? п.repeat() : len(а) == 1 ? п.repeat(а[0]) : п.repeat(а[0], а[1]),
+  pad_start: fn(п, а) {
+    if len(а) == 0 { return п.pad_start() }
+    if len(а) == 1 { return п.pad_start(а[0]) }
+    if len(а) == 2 { return п.pad_start(а[0], а[1]) }
+    return п.pad_start(а[0], а[1], а[2])
+  },
+  pad_end: fn(п, а) {
+    if len(а) == 0 { return п.pad_end() }
+    if len(а) == 1 { return п.pad_end(а[0]) }
+    if len(а) == 2 { return п.pad_end(а[0], а[1]) }
+    return п.pad_end(а[0], а[1], а[2])
+  },
+  is_empty: (п, а) -> len(а) == 0 ? п.is_empty() : п.is_empty(а[0]),
+  trim_start: (п, а) -> len(а) == 0 ? п.trim_start() : п.trim_start(а[0]),
+  trim_end: (п, а) -> len(а) == 0 ? п.trim_end() : п.trim_end(а[0]),
+  lines: (п, а) -> len(а) == 0 ? п.lines() : п.lines(а[0]),
+  words: (п, а) -> len(а) == 0 ? п.words() : п.words(а[0]),
+  capitalize: (п, а) -> len(а) == 0 ? п.capitalize() : п.capitalize(а[0]),
+  title: (п, а) -> len(а) == 0 ? п.title() : п.title(а[0]),
+  count: (п, а) -> len(а) == 0 ? п.count() : len(а) == 1 ? п.count(а[0]) : п.count(а[0], а[1]),
+  split_once: fn(п, а) {
+    if len(а) == 0 { return п.split_once() }
+    if len(а) == 1 { return п.split_once(а[0]) }
+    return п.split_once(а[0], а[1])
+  },
+  format: fn(п, а) {
+    if len(а) == 0 { return п.format() }
+    if len(а) == 1 { return п.format(а[0]) }
+    if len(а) == 2 { return п.format(а[0], а[1]) }
+    if len(а) == 3 { return п.format(а[0], а[1], а[2]) }
+    if len(а) == 4 { return п.format(а[0], а[1], а[2], а[3]) }
+    if len(а) == 5 { return п.format(а[0], а[1], а[2], а[3], а[4]) }
+    if len(а) == 6 { return п.format(а[0], а[1], а[2], а[3], а[4], а[5]) }
+    if len(а) == 7 { return п.format(а[0], а[1], а[2], а[3], а[4], а[5], а[6]) }
+    if len(а) == 8 { return п.format(а[0], а[1], а[2], а[3], а[4], а[5], а[6], а[7]) }
+    error("мост не умеет format больше чем с восемью аргументами, дано ${len(а)}")
+  },
+  push: (п, а) -> len(а) == 0 ? п.push() : а.reduce((с, э) -> с.push(э), п),
+  pop: (п, а) -> len(а) == 0 ? п.pop() : п.pop(а[0]),
+  insert: fn(п, а) {
+    if len(а) == 0 { return п.insert() }
+    if len(а) == 1 { return п.insert(а[0]) }
+    if len(а) == 2 { return п.insert(а[0], а[1]) }
+    return п.insert(а[0], а[1], а[2])
+  },
+  remove_at: fn(п, а) {
+    if len(а) == 0 { return п.remove_at() }
+    if len(а) == 1 { return п.remove_at(а[0]) }
+    return п.remove_at(а[0], а[1])
+  },
+  first: (п, а) -> len(а) == 0 ? п.first() : п.first(а[0]),
+  last: (п, а) -> len(а) == 0 ? п.last() : п.last(а[0]),
+  clone: (п, а) -> len(а) == 0 ? п.clone() : п.clone(а[0]),
+  join: (п, а) -> len(а) == 0 ? п.join() : len(а) == 1 ? п.join(а[0]) : п.join(а[0], а[1]),
+  map: (п, а) -> len(а) == 0 ? п.map() : len(а) == 1 ? п.map(а[0]) : п.map(а[0], а[1]),
+  filter: (п, а) -> len(а) == 0 ? п.filter() : len(а) == 1 ? п.filter(а[0]) : п.filter(а[0], а[1]),
+  find: (п, а) -> len(а) == 0 ? п.find() : len(а) == 1 ? п.find(а[0]) : п.find(а[0], а[1]),
+  find_index: fn(п, а) {
+    if len(а) == 0 { return п.find_index() }
+    if len(а) == 1 { return п.find_index(а[0]) }
+    return п.find_index(а[0], а[1])
+  },
+  any: (п, а) -> len(а) == 0 ? п.any() : len(а) == 1 ? п.any(а[0]) : п.any(а[0], а[1]),
+  all: (п, а) -> len(а) == 0 ? п.all() : len(а) == 1 ? п.all(а[0]) : п.all(а[0], а[1]),
+  reduce: fn(п, а) {
+    if len(а) == 0 { return п.reduce() }
+    if len(а) == 1 { return п.reduce(а[0]) }
+    if len(а) == 2 { return п.reduce(а[0], а[1]) }
+    return п.reduce(а[0], а[1], а[2])
+  },
+  sum: (п, а) -> len(а) == 0 ? п.sum() : п.sum(а[0]),
+  avg: (п, а) -> len(а) == 0 ? п.avg() : п.avg(а[0]),
+  unique: (п, а) -> len(а) == 0 ? п.unique() : п.unique(а[0]),
+  flatten: fn(п, а) {
+    if len(а) == 0 { return п.flatten() }
+    if len(а) == 1 { return п.flatten(а[0]) }
+    return п.flatten(а[0], а[1])
+  },
+  zip: (п, а) -> len(а) == 0 ? п.zip() : len(а) == 1 ? п.zip(а[0]) : п.zip(а[0], а[1]),
+  enumerate: (п, а) -> len(а) == 0 ? п.enumerate() : п.enumerate(а[0]),
+  chunk: (п, а) -> len(а) == 0 ? п.chunk() : len(а) == 1 ? п.chunk(а[0]) : п.chunk(а[0], а[1]),
+  take: (п, а) -> len(а) == 0 ? п.take() : len(а) == 1 ? п.take(а[0]) : п.take(а[0], а[1]),
+  drop: (п, а) -> len(а) == 0 ? п.drop() : len(а) == 1 ? п.drop(а[0]) : п.drop(а[0], а[1]),
+  sort_by: fn(п, а) {
+    if len(а) == 0 { return п.sort_by() }
+    if len(а) == 1 { return п.sort_by(а[0]) }
+    return п.sort_by(а[0], а[1])
+  },
+  min_by: (п, а) -> len(а) == 0 ? п.min_by() : len(а) == 1 ? п.min_by(а[0]) : п.min_by(а[0], а[1]),
+  max_by: (п, а) -> len(а) == 0 ? п.max_by() : len(а) == 1 ? п.max_by(а[0]) : п.max_by(а[0], а[1]),
+  group_by: fn(п, а) {
+    if len(а) == 0 { return п.group_by() }
+    if len(а) == 1 { return п.group_by(а[0]) }
+    return п.group_by(а[0], а[1])
+  },
+  sum_by: (п, а) -> len(а) == 0 ? п.sum_by() : len(а) == 1 ? п.sum_by(а[0]) : п.sum_by(а[0], а[1]),
+  partition: fn(п, а) {
+    if len(а) == 0 { return п.partition() }
+    if len(а) == 1 { return п.partition(а[0]) }
+    return п.partition(а[0], а[1])
+  },
+  flat_map: fn(п, а) {
+    if len(а) == 0 { return п.flat_map() }
+    if len(а) == 1 { return п.flat_map(а[0]) }
+    return п.flat_map(а[0], а[1])
+  },
+  sort: (п, а) -> len(а) == 0 ? п.sort() : len(а) == 1 ? п.sort(а[0]) : п.sort(а[0], а[1]),
+  keys: (п, а) -> len(а) == 0 ? п.keys() : п.keys(а[0]),
+  values: (п, а) -> len(а) == 0 ? п.values() : п.values(а[0]),
+  entries: (п, а) -> len(а) == 0 ? п.entries() : п.entries(а[0]),
+  has: (п, а) -> len(а) == 0 ? п.has() : len(а) == 1 ? п.has(а[0]) : п.has(а[0], а[1]),
+  get: fn(п, а) {
+    if len(а) == 0 { return п.get() }
+    if len(а) == 1 { return п.get(а[0]) }
+    if len(а) == 2 { return п.get(а[0], а[1]) }
+    return п.get(а[0], а[1], а[2])
+  },
+  set: fn(п, а) {
+    if len(а) == 0 { return п.set() }
+    if len(а) == 1 { return п.set(а[0]) }
+    if len(а) == 2 { return п.set(а[0], а[1]) }
+    return п.set(а[0], а[1], а[2])
+  },
+  remove: (п, а) -> len(а) == 0 ? п.remove() : len(а) == 1 ? п.remove(а[0]) : п.remove(а[0], а[1]),
+  merge: (п, а) -> len(а) == 0 ? п.merge() : len(а) == 1 ? п.merge(а[0]) : п.merge(а[0], а[1]),
+  map_values: fn(п, а) {
+    if len(а) == 0 { return п.map_values() }
+    if len(а) == 1 { return п.map_values(а[0]) }
+    return п.map_values(а[0], а[1])
+  },
+  pick: (п, а) -> len(а) == 0 ? п.pick() : len(а) == 1 ? п.pick(а[0]) : п.pick(а[0], а[1]),
+  omit: (п, а) -> len(а) == 0 ? п.omit() : len(а) == 1 ? п.omit(а[0]) : п.omit(а[0], а[1]),
+  get_or_insert: fn(п, а) {
+    if len(а) == 0 { return п.get_or_insert() }
+    if len(а) == 1 { return п.get_or_insert(а[0]) }
+    if len(а) == 2 { return п.get_or_insert(а[0], а[1]) }
+    return п.get_or_insert(а[0], а[1], а[2])
+  },
+  list: (п, а) -> len(а) == 0 ? п.list() : п.list(а[0]),
+}
+
+// Сам модуль ничего не делает, и без единого обращения проверка справедливо
+// говорит, что оба словаря объявлены впустую. Обращение заодно сделано замком:
+// имена легко потерять при правке — например, дописав в словарь уже занятый
+// ключ, — и потеря обязана всплыть здесь, при загрузке моста, а не через час
+// в интерпретаторе, на непонятном «неизвестная встроенная».
+assert(
+  len(ФУНКЦИИ) == 58 && len(МЕТОДЫ) == 71,
+  "мост потерял имена: функций ${len(ФУНКЦИИ)} из 58, методов ${len(МЕТОДЫ)} из 71",
+)
