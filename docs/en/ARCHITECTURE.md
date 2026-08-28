@@ -285,46 +285,57 @@ code and compares. Documentation with invented output breaks the build.
 
 ## Self-hosting — `selfhost/`
 
-Sable's front end, written in Sable:
+Sable written in Sable — the whole way, from source to execution:
 
 ```
-lexer.sable    source         → tokens
-parser.sable   tokens         → tree
-запись.sable   tree           → canonical text form
-main.sable     prints the tokens of the files given as arguments
-дерево.sable   prints the trees of the files given as arguments
+lexer.sable         source        → tokens
+parser.sable        tokens        → tree
+запись.sable        tree          → canonical text form
+интерпретатор.sable tree          → execution
+встроенные.sable    bridge to the real standard library
+main.sable / дерево.sable / запуск.sable — entry points for the cross-checks
 ```
 
-This is the same language they are written in, and they do everything the real
-front end does: significant newlines, nested comments, strings with
-interpolation, precedence down to right-associative exponentiation, a dictionary
-against a block body, and refusal at exactly the points where the real parser
-refuses.
+The standard library is not rewritten: the bridge holds a dictionary from name
+to the real builtin, so `len` inside an executed program is the language's own
+`len`. Otherwise the cross-check would be testing a second implementation of the
+library rather than the language. The interpreter has only five values of its
+own — closure, struct definition, instance, module and exit signal; because of
+them, printing, `type`, comparison and the methods that take a function have to
+be done by hand.
 
-Verification is by cross-check, not by examples. `tests/selfhost.ts` takes every
-`.sable` file in the repository — all 122, including the front end's own
-sources — and runs it twice: the token stream against the real lexer, the tree
-against the real parser. Trees are compared through a canonical text form
-(`tests/ast-repr.ts` on the real side, `запись.sable` on the other): one node per
-line, positions never serialised — the real lexer counts columns in UTF-16 code
-units and Sable counts characters, and on emoji they diverge legitimately.
+All of it is verified by cross-check, not by examples, on three levels:
 
-A file with deliberately broken syntax is a result too: both must refuse, and
-refuse at the same time. A matching refusal is still a match, so a front end that
-always refuses would pass the whole cross-check; to keep that hole shut, the test
-separately requires most files to have actually parsed. Beyond the repository,
-about fifty spellings it may never contain are checked: `2 ^ 3 ^ 2`, `-2 ^ 2`,
-`??` against `||`, a lambda against parentheses, `{}` as a dictionary and as a
-block, `finally` without `try`, a repeated name in an import list.
+| Suite | What is compared | Over what |
+|---|---|---|
+| `tests/selfhost.ts` | the token stream, then the parse tree | every `.sable` file in the repository, twice |
+| `tests/selfrun.ts` | what the program printed | every example and every golden case |
 
-Both passes over the whole repository take about three seconds, and the parser's
-descent needs roughly 160 frames out of 900 — the call ceiling is not in the way.
+Trees are compared through a canonical text form (`tests/ast-repr.ts` on the real
+side, `запись.sable` on the other): one node per line, positions never
+serialised — the real lexer counts columns in UTF-16 code units and Sable counts
+characters, and on emoji they diverge legitimately.
 
-The value of this work is not that it sounds impressive but what it finds. Out of
-it came `char`/`code` — without them you cannot decode `\u{...}` in the language
-itself — `args()` (file paths had to arrive over stdin, because a program could
-not reach its command-line arguments), the fill layout for dictionaries in the
-formatter, and the fix for quadratic character access on strings.
+A program that fails is a result too: both must fail, at the same point in the
+output and with the same message. Of the 87 programs compared, 33 do fail, and
+their error text matches word for word. A matching refusal is still a match, so
+a front end that always refuses would pass the whole cross-check; to keep that
+hole shut, both tests separately require most files to have actually parsed and
+run.
+
+What the Sable side does not reproduce is listed with a reason for each case and
+printed on every run: non-determinism (`random`, `now`), nesting limits (its own
+differ) and printing a value that refers to itself.
+
+Both runs together take about four seconds.
+
+The value of this work is not that it sounds impressive but what it finds. Out
+of it came `char`/`code` — without them you cannot decode `\u{...}` in the
+language itself — `args()` and `apply()` (without the first a program cannot see
+its own arguments, without the second it cannot call a function with a computed
+list), the fill layout for dictionaries in the formatter, a grammatical-case fix
+in the argument-count message, the missing test that `&&` and `||` return the
+operand itself, and the fix for quadratic character access on strings.
 
 ## What is still the bottleneck
 

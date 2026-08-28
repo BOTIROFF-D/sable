@@ -39,7 +39,7 @@ the same interpreter compiled for the web.
 node src/cli.ts examples/01_hello.sable   # run a file
 node src/cli.ts                           # interactive session
 node src/cli.ts --check file.sable        # analyse without running
-npm test                                  # all nine suites
+npm test                                  # all ten suites
 ```
 
 > The reference, the tutorial and all diagnostics are written in Russian.
@@ -146,7 +146,7 @@ src/
   cli.ts          запуск файла, REPL, -e, --check, fmt
 tests/            golden-тесты: вывод программы сверяется с эталоном
 examples/         примеры (их вывод тоже под замком тестов)
-selfhost/         лексер и парсер Sable, написанные на Sable
+selfhost/         Sable, написанный на Sable: лексер, парсер, интерпретатор
 docs/             учебник, справочник, устройство
 ```
 
@@ -158,7 +158,7 @@ node tests/run.ts --only=maps  # только словари
 node tests/run.ts --update     # перезаписать эталоны (после осознанной правки)
 ```
 
-Девять независимых наборов:
+Десять независимых наборов:
 
 | Набор | Что запирает |
 |---|---|
@@ -171,6 +171,7 @@ node tests/run.ts --update     # перезаписать эталоны (пос
 | `tests/web.ts` | песочница: сборка не тянет ничего из Node, поведение как в терминале |
 | `tests/scale.ts` | посимвольный проход по строке растёт линейно, а не квадратично |
 | `tests/selfhost.ts` | перёд на Sable даёт те же лексемы и то же дерево, что настоящий |
+| `tests/selfrun.ts` | интерпретатор на Sable печатает то же, что настоящий, — на всех примерах |
 
 Отдельно живут два охотника, в `npm test` они не входят — это охота, а не проверка:
 
