@@ -106,7 +106,9 @@ The fine points, which usually surface later:
 - `-2 ^ 2` is `-4`: the power binds tighter than unary minus, as in mathematics.
 - `==` compares **by content**: `[1, [2]] == [1, [2]]` is true.
 - Only `false` and `nil` are falsy. `0` and `""` are truthy.
-- `&&` and `||` do not evaluate the right-hand side once the outcome is settled.
+- `&&` and `||` do not evaluate the right-hand side once the outcome is settled,
+  and they return **the operand itself**, not `true`/`false`: `0 && "x"` is `"x"`,
+  and `"" || "fallback"` is `""`.
 - `??` substitutes the fallback only for `nil`, never for `false` or `0`.
 - Division by zero is an error, not `inf`. So is any overflow: `1e308 * 10`,
   `0 ^ -1`, `exp(1000)` are errors. The language has neither infinity nor
