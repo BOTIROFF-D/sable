@@ -549,8 +549,12 @@ class Checker {
 
   private checkArity(arity: Arity, got: number, span: Span): void {
     if (got >= arity.min && got <= arity.max) return;
-    const need = arity.min === arity.max ? `${arity.min}` : `от ${arity.min} до ${arity.max}`;
-    this.error(`«${arity.name}» ожидает ${need} ${plural(arity.max)}, а получает ${got}`, span);
+    // «от 1 до 2 аргументов», а не «аргумента»: после диапазона слово идёт
+    // в родительном множественном независимо от числа на конце.
+    const need = arity.min === arity.max
+      ? `${arity.min} ${plural(arity.min)}`
+      : `от ${arity.min} до ${arity.max} аргументов`;
+    this.error(`«${arity.name}» ожидает ${need}, а получает ${got}`, span);
   }
 
   private assign(expr: Extract<Expr, { kind: 'Assign' }>): void {

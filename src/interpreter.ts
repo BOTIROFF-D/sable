@@ -1258,13 +1258,12 @@ export class Interpreter {
 
   checkArity(name: string, got: number, min: number, max: number, span: Span): void {
     if (got >= min && got <= max) return;
-    const need = min === max ? `${min}`
-      : max === Infinity ? `хотя бы ${min}`
-      : `от ${min} до ${max}`;
-    throw runtimeError(
-      `«${name}» ожидает ${need} ${plural(max === Infinity ? min : max)}, а получила ${got}`,
-      span,
-    );
+    // «от 2 до 3 аргументов», а не «аргумента»: после диапазона слово идёт
+    // в родительном множественном независимо от числа на конце.
+    const need = min === max ? `${min} ${plural(min)}`
+      : max === Infinity ? `хотя бы ${min} ${plural(min)}`
+      : `от ${min} до ${max} аргументов`;
+    throw runtimeError(`«${name}» ожидает ${need}, а получила ${got}`, span);
   }
 }
 
